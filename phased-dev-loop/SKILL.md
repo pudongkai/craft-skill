@@ -5,7 +5,7 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "python3 \"${CLAUDE_SKILL_DIR}/scripts/stop_guard.py\""
+          command: "python3 \"$HOME/.claude/skills/phased-dev-loop/scripts/stop_guard.py\""
           timeout: 10
 ---
 
@@ -90,7 +90,7 @@ hooks:
 
 ## Stop hook 的行为
 
-hook 在 skill 被调用后生效，每次 Claude 准备结束回复时运行：
+hook 在 skill 被调用后生效，每次 Claude 准备结束回复时运行。hook 命令按固定路径 `~/.claude/skills/phased-dev-loop/scripts/stop_guard.py` 找脚本（hook 命令里取不到 skill 所在目录），所以 skill 必须安装在这个位置。各种情况下的行为：
 
 | 方案情况 | hook 行为 |
 | --- | --- |
