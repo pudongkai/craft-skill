@@ -1,0 +1,1 @@
+{"dws_profile": "<主管的 dws profile：dws profile list 里的 profile 字段>", "chat_id": "<主管与数字员工单聊的会话 id>", "dws": "<可选：dws 可执行文件路径，默认 ~/.local/bin/dws>"}
