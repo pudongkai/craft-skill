@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Stop hook：技术方案里还有未完成阶段时，阻止 Claude 结束本轮回复。
 
-.claude/dev-loop/ACTIVE 记录当前开发的技术方案文档路径。
-只在开发状态为 RUNNING 时拦截；BLOCKED / DONE 或没有 ACTIVE 时放行。
-连续多次拦截而文档没有任何变化时放行，避免 Claude 卡住后无限循环。
+.claude/dev-loop/ACTIVE 每行一个正在开发的技术方案路径，同一项目里可以有多个会话各自开发一份。
+本会话开发的是列表里会话记录中最后提到的那份方案；一份都没提到过，说明本会话没在开发，放行。
+只在该方案开发状态为 RUNNING 时拦截。以下情况也放行：
+- 本会话还有没交回结果的后台子 agent：主对话只能结束本轮来等结果，交回后会自动接着干。
+- 本会话连续多次拦截而文档没有任何变化：避免 Claude 卡住后无限循环。
 """
 import hashlib
 import json
@@ -18,6 +20,8 @@ PHASE_RE = re.compile(r"^(?:[-*]|\d+\.)\s+\[([ ~xX!])\]\s+(.+)$")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 PLAN_SECTION_RE = re.compile(r"开发计划|实施计划|开发阶段|阶段划分|实施步骤")
 STATUS_RE = re.compile(r"^\**开发状态\**\s*[:：]\s*\**\s*(\w+)", re.MULTILINE)
+TASK_DONE_RE = re.compile(r"<task-id>([0-9a-f]+)</task-id>.*?<status>(?:completed|failed|killed|stopped)</status>")
+MAX_GUARD_SESSIONS = 20
 
 
 def find_project_root(start):
@@ -31,16 +35,29 @@ def find_project_root(start):
         path = parent
 
 
-def load_plan(root):
+def active_plans(root):
+    """ACTIVE 里列出的方案路径（相对项目根目录），去重并保持顺序。"""
     with open(os.path.join(root, STATE_DIR, "ACTIVE"), encoding="utf-8") as f:
-        rel = f.read().strip()
-    if not rel:
-        return None, None
-    plan_path = os.path.join(root, rel)
-    if not os.path.isfile(plan_path):
-        return plan_path, None
-    with open(plan_path, encoding="utf-8") as f:
-        return plan_path, f.read()
+        return list(dict.fromkeys(line.strip() for line in f if line.strip()))
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def session_target(transcript, candidates):
+    """返回 (本会话未交回结果的后台子 agent 数, 本会话对应的候选路径或 None)。
+
+    对应的是会话记录里最后提到的候选；读不到会话记录时，只有一个候选就用它。
+    """
+    pending, target = scan_transcript(transcript, candidates)
+    if target is _UNREADABLE:
+        return 0, candidates[0] if len(candidates) == 1 else None
+    return pending, target
 
 
 def plan_section(lines):
@@ -66,18 +83,76 @@ def parse_phases(text):
     return phases
 
 
-def stalled_count(root, text):
-    """返回文档内容连续未变化的拦截次数（含本次）。"""
-    guard_path = os.path.join(root, STATE_DIR, ".stop-guard.json")
+def _launched_agent(row):
+    """这一行是派出（或恢复）后台子 agent 的工具结果时返回 agent id。"""
+    r = row.get("toolUseResult")
+    if not isinstance(r, dict):
+        return None
+    if r.get("status") == "async_launched":
+        return r.get("agentId")
+    return r.get("resumedAgentId")
+
+
+def _finished_agents(row):
+    """Claude Code 排进队列的完成通知里已结束的 agent id。"""
+    if row.get("type") == "queue-operation":
+        text = row.get("content")
+    elif row.get("type") == "attachment":
+        text = (row.get("attachment") or {}).get("prompt")
+    else:
+        return []
+    return TASK_DONE_RE.findall(" ".join(text.split())) if isinstance(text, str) else []
+
+
+_UNREADABLE = object()
+
+
+def _last_mentioned(line, needles):
+    hits = [(line.rfind(n), n) for n in needles if n in line]
+    return max(hits)[1] if hits else None
+
+
+def scan_transcript(transcript, needles):
+    """返回 (未交回结果的后台子 agent 数, 会话记录里最后提到的 needle)。读不到记录时第二项为 _UNREADABLE。"""
+    pending, last = set(), None
+    try:
+        with open(transcript, encoding="utf-8") as f:
+            for line in f:
+                last = _last_mentioned(line, needles) or last
+                if "gentId" not in line and "<task-id>" not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                aid = _launched_agent(row)
+                if aid:
+                    pending.add(aid)
+                pending.difference_update(_finished_agents(row))
+    except (OSError, TypeError):
+        return 0, _UNREADABLE
+    return len(pending), last
+
+
+def stalled_count(root, state_dir, session_id, text):
+    """返回本会话里文档内容连续未变化的拦截次数（含本次）。各会话分开计数。"""
+    guard_path = os.path.join(root, state_dir, ".stop-guard.json")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     try:
         with open(guard_path, encoding="utf-8") as f:
-            prev = json.load(f)
+            guards = json.load(f)
     except (OSError, ValueError):
-        prev = {}
+        guards = {}
+    if not isinstance(guards.get("sessions"), dict):
+        guards = {"sessions": {}}
+    sessions = guards["sessions"]
+    prev = sessions.pop(session_id, {})
     count = prev.get("count", 0) + 1 if prev.get("hash") == digest else 1
+    sessions[session_id] = {"hash": digest, "count": count}
+    for stale in list(sessions)[:-MAX_GUARD_SESSIONS]:
+        del sessions[stale]
     with open(guard_path, "w", encoding="utf-8") as f:
-        json.dump({"hash": digest, "count": count}, f)
+        json.dump(guards, f)
     return count
 
 
@@ -112,23 +187,26 @@ def main():
     root = find_project_root(payload.get("cwd") or os.getcwd())
     if root is None:
         return
-    plan_path, text = load_plan(root)
+    pending, rel = session_target(payload.get("transcript_path"), active_plans(root))
+    if pending or rel is None:
+        return
+    text = read_text(os.path.join(root, rel))
     if text is None:
         return
     status_match = STATUS_RE.search(text)
     if not status_match or status_match.group(1).upper() != "RUNNING":
         return
 
-    if stalled_count(root, text) > MAX_STALLED_BLOCKS:
+    if stalled_count(root, STATE_DIR, payload.get("session_id", ""), text) > MAX_STALLED_BLOCKS:
         print(json.dumps({
             "systemMessage": (
                 f"[phased-dev-loop] 连续 {MAX_STALLED_BLOCKS} 次拦截后技术方案文档没有任何变化，"
-                f"已放行停止。请检查 {os.path.relpath(plan_path, root)}。"
+                f"已放行停止。请检查 {rel}。"
             )
         }, ensure_ascii=False))
         return
 
-    reason = build_reason(os.path.relpath(plan_path, root), parse_phases(text))
+    reason = build_reason(rel, parse_phases(text))
     print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
 
 
