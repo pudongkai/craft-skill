@@ -127,7 +127,11 @@ hooks:
 
 ## Stop hook 的行为
 
-hook 在 skill 被调用后生效，每次 Claude 准备结束回复时运行。hook 命令按固定路径 `~/.claude/skills/phased-dev-loop/scripts/stop_guard.py` 找脚本（hook 命令里取不到 skill 所在目录），所以 skill 必须安装在这个位置。各种情况下的行为：
+hook 在 skill 被调用后生效，每次 Claude 准备结束回复时运行。hook 命令按固定路径 `~/.claude/skills/phased-dev-loop/scripts/stop_guard.py` 找脚本（hook 命令里取不到 skill 所在目录），所以 skill 必须安装在这个位置。
+
+**已知客户端 bug（见 `references/failure-modes.md` F5）**：即使命令写死成上面的全路径，Claude Code（2.1.263 实测）加载 SKILL.md 的 `hooks:` 声明时仍会把它改写成 `${CLAUDE_SKILL_DIR}/scripts/stop_guard.py`，而这个变量取不到值，hook 实际上完全不生效（报 exitCode 2，脚本找不到）。改 SKILL.md 文本解决不了。确认 hook 没生效时，变通方案是把 `stop_guard.py` 复制进目标项目（如 `.claude/hooks/stop_guard.py`），在该项目的 `.claude/settings.local.json` 里用 `$CLAUDE_PROJECT_DIR` 手写注册 Stop hook（走的是另一条不受此 bug 影响的路径）。
+
+各种情况下的行为：
 
 | 方案情况 | hook 行为 |
 | --- | --- |

@@ -8,7 +8,8 @@
 | F2 | 完成后不标记 | 代码写完了，技术方案里还是 `[ ]` 或 `[~]`，下次恢复时重复开发或漏掉验证 | 规则 R2；单轮流程第 5 步“在方案里标记”；Stop hook 的提示里要求先补标记 |
 | F3 | 等后台子 agent 时被反复拦截 | 把阶段交给后台子 agent 后，主对话只能结束本轮等结果，方案没变化，hook 连续拦截 3 次才放行，每次显示 Stop hook error | Stop hook 读会话记录，有没交回结果的后台子 agent 时放行 |
 | F4 | 同一项目多个会话互相干扰 | 会话收到别的会话所开发方案的提示；拦截计数被几个会话共用，超过上限后每次停下都直接放行 `ACTIVE` 改成每行一份方案，hook 按本会话记录里最后提到的方案判断；拦截计数按会话分开 |
+| F5 | Stop hook 完全不生效 | 每次停下都报 hook 执行失败：`"${CLAUDE_SKILL_DIR}/scripts/stop_guard.py"` 找不到文件（exitCode 2），SKILL.md 里写的其实已经是写死的全路径 `$HOME/.claude/skills/phased-dev-loop/scripts/stop_guard.py`——Claude Code（2.1.263 实测）加载 SKILL.md 的 `hooks:` 声明时会把命令里指向 skill 目录的部分自动改写成 `${CLAUDE_SKILL_DIR}`，而这个变量在 Stop 事件里取不到值，等于白改。客户端 bug，改 SKILL.md 文本解决不了 | 变通：不用 SKILL.md 的 `hooks:` 自动声明，把 `stop_guard.py` 复制一份到目标项目内（如 `.claude/hooks/stop_guard.py`），在该项目 `.claude/settings.local.json` 里用 `$CLAUDE_PROJECT_DIR` 手写注册 Stop hook（这条路径不经过 skill 的 hooks 声明，不受此 bug 影响）。写这两处需要项目的文件写权限，不在技能本身能自动处理的范围内 |
 
 <!-- 新增问题模板：
-| F5 | <一句话问题> | <具体表现> | <新增的规则编号 / 机制> |
+| F6 | <一句话问题> | <具体表现> | <新增的规则编号 / 机制> |
 -->
