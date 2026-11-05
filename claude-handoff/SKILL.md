@@ -1,0 +1,89 @@
+---
+name: claude-handoff
+description: 把当前会话手上的开发任务交给另一台 Mac 上的 Claude 接着做（Claude 接力）。自动按 iCloud 云盘里的登记找到对方机器的地址，推送分支、在对方拉取、把交接文档复制过去，并在对方的 tmux 里启动 Claude。触发场景：“接力给 m16”、“把这个任务交给另一台电脑”、“让隔壁那台 Mac 接着做”、“Claude 接力”、“查一下另一台 Mac 在不在线”。
+---
+
+# Claude 接力
+
+把当前任务交给另一台 Mac 上的 Claude。两台 Mac 互相都可以接力。
+
+脚本（相对本技能目录，运行前拼成绝对路径）：
+
+- `scripts/peer.py`：找到对方机器并在上面执行操作，命令见文件开头的说明。`<机器>` 写电脑名的一部分即可，如 `m16`。
+- `scripts/register.sh`：把本机地址登记到 iCloud 云盘，由 launchd 自动运行。
+- `scripts/install.sh`：安装登记任务；`install.sh uninstall` 卸载。
+
+## 怎么找到对方
+
+每台 Mac 上有一个 launchd 任务，登录时、网络变化时和每隔 5 分钟，把本机的电脑名、主机名、用户名、IP 写进 `iCloud 云盘/ClaudeHandoff/hosts/<主机名>.json`。两台 Mac 登录同一个 Apple 账户，所以都能读到对方的登记。
+
+`peer.py` 按登记的地址连过去，连上后核对主机名，对不上就不算连通。SSH 主机密钥按主机名记录，地址变了也能认出是不是同一台机器。登记很久没更新时，对方可能在睡眠、关机或换了网络，`peer.py` 会在报错里说明。
+
+## 首次设置（每台 Mac 一次）
+
+`peer.py list` 能列出对方、`peer.py resolve <机器>` 能连通，说明设置完成，跳过本节。否则逐项检查，需要用户在对方机器上手动做的，把命令整理好交给用户：
+
+1. **装好技能**：craft-skill 拉到最新，`~/.claude/skills/claude-handoff` 指向仓库里的 `claude-handoff`。
+2. **登记地址**：运行 `scripts/install.sh`。iCloud 云盘要开着。
+3. **远程登录**：系统设置 → 通用 → 共享 → 打开“远程登录”。
+4. **互相加公钥**：把本机 `~/.ssh/id_ed25519.pub`（或其他公钥）加到对方的 `~/.ssh/authorized_keys`，权限 `~/.ssh` 700、`authorized_keys` 600。双向接力时两边都要加。
+5. **Claude 能在 SSH 下用上登录信息**：macOS 的 Claude Code 把登录信息存在钥匙串里，SSH 会话里读不到。二选一：
+   - 在对方机器本地的终端里执行一次 `tmux new -d -s main`。接力时 Claude 在这个 tmux 里启动，能读到钥匙串。重启或 tmux 全部关闭后要重新执行。
+   - 在对方机器本地执行 `claude setup-token`，把令牌写进 `~/.claude-oauth-env`（内容 `export CLAUDE_CODE_OAUTH_TOKEN=<令牌>`，权限 600）。接力时会自动读取，长期有效。
+6. **对方的 Claude Code 是官方安装的版本**：`claude --version` 和本机差得太多，或者 `which claude` 指向别的应用的目录时，提醒用户，phased-dev-loop / dev-flow 的 Stop hook 在旧版本上可能不生效。
+
+## 接力流程
+
+### 1. 确认对方在线
+
+`peer.py resolve <机器>`。连不上就把报错原因告诉用户，停下。
+
+### 2. 写交接文档
+
+在项目里写 `.claude/handoff-<YYYYMMDD>-<任务简称>.md`，让对方的 Claude 不看这段对话也能接着做：
+
+- **目标**：要完成什么，做到什么程度算完成。
+- **当前进度**：已经做完的、正在做的、还没做的。用 phased-dev-loop / dev-flow 开发时，进度以技术方案为准，这里写方案路径和当前环节，不重复列阶段。
+- **关键信息**：涉及的文件、做过的决定和原因、用户提过的要求、试过但不行的做法。
+- **怎么验证**：要跑的测试、构建命令或检查项。
+- **分支和提交**：分支名、最后一个提交号。
+
+只写结论，不贴大段日志和对话。
+
+### 3. 提交并推送分支
+
+- 只提交本任务的改动，不提交 `.claude/` 下的本地状态文件（交接文档另外复制，不走 git）。
+- 推送是对外操作，先告诉用户要推送哪个分支、包含哪些提交，用户同意后再推送。
+- 工作区里和本任务无关的改动不提交，也不要 stash 或丢弃，在交接文档里写明。
+
+### 4. 在对方准备代码
+
+1. `peer.py find-project <机器> <origin 地址>` 找到对方的仓库目录。找到多个时选和本机目录名相同的；找不到就问用户要不要克隆、放在哪。
+2. `peer.py ssh <机器> 'cd <目录> && git status --short'`。对方有未提交的改动时**停下问用户**，不要覆盖、stash 或丢弃。
+3. `peer.py ssh <机器> 'cd <目录> && git fetch && git checkout <分支> && git pull --ff-only'`。
+
+### 5. 复制交接文档
+
+`peer.py copy <机器> <本地交接文档> <对方目录>/.claude/`，必要时先 `peer.py ssh <机器> 'mkdir -p <对方目录>/.claude'`。
+
+### 6. 在对方启动 Claude
+
+`peer.py launch <机器> <对方目录> <会话名> "<提示词>"`
+
+- 会话名用 `handoff-<任务简称>`。
+- 提示词：`读 .claude/handoff-<…>.md，按里面的说明接着完成任务。` 用 phased-dev-loop / dev-flow 开发的，加上对应的说法（如“按流程开发 <方案路径>”），让对方触发同一个技能。
+- 脚本启动后等 15 秒，打印对方屏幕的最后几行。看到没登录、询问是否信任目录等提示时，按提示告诉用户怎么处理。
+
+### 7. 告诉用户
+
+- 交给了哪台机器、哪个目录、哪个分支。
+- 在对方机器上查看进度：`tmux attach -t <会话名>`（看完按 `Ctrl-b d` 退出，不会打断它）。
+- 本机这边之后不要再改同一个分支，避免两边冲突。
+
+用户之后问进度时，用 `peer.py ssh <机器> 'tmux capture-pane -p -t <会话名> | tail -40'` 看对方屏幕。
+
+## 注意
+
+- 两台 Mac 要在能互相连通的网络里。公司网络如果屏蔽了设备之间的连接，登记了地址也连不上。
+- 不在对方机器上做设置以外的改动：不删文件、不改配置、不处理对方未提交的改动。
+- 卸载：每台 Mac 上运行 `scripts/install.sh uninstall`。
