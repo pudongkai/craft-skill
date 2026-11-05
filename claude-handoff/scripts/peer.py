@@ -6,7 +6,10 @@
   peer.py ssh <机器> <命令>                        在对方机器上执行命令
   peer.py copy <机器> <本地文件> <对方目录>          复制文件过去，并核对两边内容一致
   peer.py find-project <机器> <git 远程地址>        在对方机器上找同一个仓库的目录
-  peer.py launch <机器> <对方目录> <会话名> <提示词>   在对方的 tmux 里启动 Claude
+  peer.py launch <机器> <对方目录> <会话名> <提示词> [--tmux]
+                                                 在对方弹出终端窗口启动 Claude，输出窗口编号（/dev/ttys…）；
+                                                 --tmux 改为在对方的 tmux 里启动，编号就是会话名
+  peer.py screen <机器> <窗口编号>                  查看对方窗口（或 tmux 会话）屏幕的最后 40 行
 
 <机器> 可以是电脑名或主机名的一部分（不区分大小写），如 m16。
 """
@@ -162,36 +165,102 @@ def cmd_find_project(args):
     print("\n".join(dirs))
 
 
-def launch_script(directory, session, prompt):
+def remote_dir(directory):
+    """对方目录转成 shell 参数；~/ 开头的换成 $HOME，引号里的 ~ 不会展开。"""
+    if directory == "~" or directory.startswith("~/"):
+        return '"$HOME"' + (shlex.quote(directory[1:]) if len(directory) > 1 else "")
+    return shlex.quote(directory)
+
+
+def applescript_str(text):
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def window_script(directory, session, prompt):
+    """在对方的“终端”里开一个新窗口运行 Claude。图形界面里启动的进程能读到钥匙串里的登录信息。
+
+    Claude Code 会改写窗口标题，所以用窗口的 tty 作为之后查看屏幕的编号。
+    """
+    shell = f"cd {remote_dir(directory)} && claude {shlex.quote(prompt)}"
+    lines = [
+        'tell application "Terminal"',
+        f'set t to do script {applescript_str(shell)}',
+        f'set custom title of t to {applescript_str(session)}',
+        'activate',
+        'return tty of t',
+        'end tell',
+    ]
+    args = " ".join(f"-e {shlex.quote(line)}" for line in lines)
+    return (f"tty=$(osascript {args} 2>&1) || {{ echo \"$tty\"; exit 5; }}; "
+            "echo \"WINDOW_TTY=$tty\"; sleep 15; " + screen_script("$tty", literal=False))
+
+
+def tmux_script(directory, session, prompt):
     claude = "claude " + shlex.quote(prompt)
     return (
         "tmux ls >/dev/null 2>&1 || { echo NO_TMUX_SERVER; exit 3; }; "
         f"tmux has-session -t {shlex.quote(session)} 2>/dev/null && {{ echo SESSION_EXISTS; exit 4; }}; "
-        f"[ -f ~/.claude-oauth-env ] && . ~/.claude-oauth-env; "
-        f"tmux new-session -d -s {shlex.quote(session)} -c {shlex.quote(directory)} {shlex.quote(claude)} && "
+        "[ -f ~/.claude-oauth-env ] && . ~/.claude-oauth-env; "
+        f"tmux new-session -d -s {shlex.quote(session)} -c {remote_dir(directory)} {shlex.quote(claude)} && "
         f"sleep 15 && tmux capture-pane -p -t {shlex.quote(session)} | tail -25")
 
 
-def cmd_launch(args):
-    keyword, directory, session, prompt = args
-    r = run_remote(keyword, launch_script(directory, session, prompt), capture=True)
-    out = r.stdout
+def screen_script(ident, literal=True):
+    """ident 是 /dev/ttys… 时按 tty 找终端窗口，否则当作 tmux 会话名。literal=False 时 ident 是 shell 变量。"""
+    arg = shlex.quote(ident) if literal else f'"{ident}"'
+    lines = [
+        'on run argv',
+        'tell application "Terminal"',
+        'repeat with w in windows',
+        'repeat with t in tabs of w',
+        'if tty of t is item 1 of argv then return history of t',
+        'end repeat',
+        'end repeat',
+        'end tell',
+        'return ""',
+        'end run',
+    ]
+    args = " ".join(f"-e {shlex.quote(line)}" for line in lines)
+    return (f"id={arg}; case \"$id\" in /dev/*) out=$(osascript {args} \"$id\" 2>&1);; "
+            "*) out=$(tmux capture-pane -p -t \"$id\" 2>/dev/null);; esac; "
+            "printf '%s\\n' \"$out\" | grep -v '^[[:space:]]*$' | tail -40")
+
+
+def report_launch(out, session):
     if "NO_TMUX_SERVER" in out:
         raise PeerError("对方没有正在运行的 tmux。请在对方机器本地的终端里执行一次 `tmux new -d -s main`，"
-                        "让 Claude 能读到登录信息，然后再接力。")
+                        "或者不加 --tmux，改为弹出终端窗口。")
     if "SESSION_EXISTS" in out:
         raise PeerError(f"对方已经有名为 {session} 的 tmux 会话，换个会话名。")
-    print(out)
+    if "-1743" in out or "Not authorized" in out:
+        raise PeerError("对方没有允许远程控制“终端”。请在对方机器的 系统设置 → 隐私与安全性 → 自动化 里，"
+                        "允许 sshd-keygen-wrapper 控制“终端”，然后再接力。")
+    print(out.replace("WINDOW_TTY=", "窗口编号："))
     if "Not logged in" in out or "/login" in out:
         print("\n[提示] 对方的 Claude 没有登录，见 SKILL.md 的“首次设置”。")
     elif "trust" in out.lower():
         print("\n[提示] 对方的 Claude 在询问是否信任这个目录，需要在对方机器上确认。")
+
+
+def cmd_launch(args):
+    use_tmux = "--tmux" in args
+    keyword, directory, session, prompt = [a for a in args if a != "--tmux"]
+    build = tmux_script if use_tmux else window_script
+    r = run_remote(keyword, build(directory, session, prompt), capture=True)
+    report_launch(r.stdout + r.stderr, session)
     sys.exit(r.returncode)
+
+
+def cmd_screen(args):
+    keyword, ident = args
+    r = run_remote(keyword, screen_script(ident), capture=True)
+    print(r.stdout.rstrip() or f"对方没有编号为 {ident} 的终端窗口，也没有同名 tmux 会话")
 
 
 COMMANDS = {
     "list": (cmd_list, 0), "resolve": (cmd_resolve, 1), "ssh": (cmd_ssh, -2),
     "copy": (cmd_copy, 3), "find-project": (cmd_find_project, 2), "launch": (cmd_launch, 4),
+    "screen": (cmd_screen, 2),
 }
 
 
@@ -201,7 +270,8 @@ def main():
         sys.exit(2)
     func, nargs = COMMANDS[sys.argv[1]]
     args = sys.argv[2:]
-    if (nargs >= 0 and len(args) != nargs) or (nargs < 0 and len(args) < -nargs):
+    counted = [a for a in args if a != "--tmux"]
+    if (nargs >= 0 and len(counted) != nargs) or (nargs < 0 and len(counted) < -nargs):
         print(__doc__)
         sys.exit(2)
     try:
