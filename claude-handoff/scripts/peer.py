@@ -4,7 +4,7 @@
   peer.py list                                   列出登记过的机器
   peer.py resolve <机器>                          找到并连通，输出 用户@地址
   peer.py ssh <机器> <命令>                        在对方机器上执行命令
-  peer.py copy <机器> <本地文件> <对方路径>          复制文件过去
+  peer.py copy <机器> <本地文件> <对方目录>          复制文件过去，并核对两边内容一致
   peer.py find-project <机器> <git 远程地址>        在对方机器上找同一个仓库的目录
   peer.py launch <机器> <对方目录> <会话名> <提示词>   在对方的 tmux 里启动 Claude
 
@@ -127,14 +127,24 @@ def cmd_ssh(args):
     sys.exit(run_remote(args[0], " ".join(args[1:])).returncode)
 
 
+def sha256(path):
+    r = subprocess.run(["shasum", "-a", "256", path], capture_output=True, text=True, check=True)
+    return r.stdout.split()[0]
+
+
 def cmd_copy(args):
-    keyword, local, remote = args
+    keyword, local, remote_dir = args
     h, ip = resolve(keyword)
+    remote = remote_dir.rstrip("/") + "/" + os.path.basename(local)
     r = subprocess.run(["scp", "-q", *SSH_OPTS, "-o", f"HostKeyAlias={h['host']}",
                         local, f"{h['user']}@{ip}:{remote}"])
-    if r.returncode == 0:
-        print(f"已复制到 {h['name']}:{remote}")
-    sys.exit(r.returncode)
+    if r.returncode != 0:
+        sys.exit(r.returncode)
+    check = subprocess.run(ssh_base(h, ip) + [f"shasum -a 256 {shlex.quote(remote)}"],
+                           capture_output=True, text=True)
+    if check.stdout.split()[:1] != [sha256(local)]:
+        raise PeerError(f"复制后 {h['name']}:{remote} 的内容和本地不一致，不要删除本地文件")
+    print(f"已复制到 {h['name']}:{remote}，两边内容一致")
 
 
 def cmd_find_project(args):
