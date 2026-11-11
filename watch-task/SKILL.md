@@ -14,7 +14,7 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
 | `list` | 现在在盯哪些、各自状态；hook 没注册时第一行提示 |
 | `install` / `uninstall` | 把 hook 注册进（或删出）用户级 `~/.claude/settings.json`。**由主管在终端运行**，见“首次使用” |
 | `check` | 检查所有在盯的会话（含 hook 记下的事件）；没新情况输出 `OK`，否则每个会话一段 `【名称】…`；叫醒消息没发出去时多一段 `【叫醒】…` |
-| `reply <名称> <文字>` | 在那个会话所在的 Terminal 标签里替主管输入一句并回车（长文字会被当成粘贴留在输入框，所以脚本会再补一次回车）；只在它停在输入框（idle / shell）时发 |
+| `reply-check <名称>` | 替主管回话前的检查：找到那个会话，确认 `crossSessionInbound` 是 `accept`（不是的话输出要提醒主管的话，退出码 3）。真正发送用会话间发消息，见“流程”第 3 步 |
 
 ## 首次使用
 
@@ -24,6 +24,9 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
 3. 用 dws 以主管身份往这个单聊发一条测试消息（`chat +messages-send --as user --chat-id … --text … --yes`，带 `--profile`、环境变量 `DWS_SHIM_DISABLE=1`），确认你被叫醒。
 4. 请主管在自己的终端运行一次 `python3 "<本技能目录>/scripts/watch.py" install`（把路径拼成绝对路径发给主管）。
    这一步要写 `~/.claude/settings.json`，不在我能写的目录里，所以必须由主管来做；只需要做一次，以后盯哪个会话都不用再改设置。
+5. 要替主管回话的，请主管把 `crossSessionInbound` 设成 `accept`（`/config` 里的「Messages from your other sessions」，
+   或 `~/.claude/settings.json` 里加 `"crossSessionInbound": "accept"`）。不设的话，被盯会话开着跳过权限确认的模式时，
+   我发过去的消息会被拦下等主管在终端里点确认，5 分钟没人点就丢掉。
 没配 `state/config.json` 时 hook 只记事件、不叫醒，只能在主管问起时 `check`。
 
 ## 怎么叫醒我（不靠定时任务）
@@ -59,10 +62,13 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
    `add` 提示 hook 没注册时，照提示把 `install` 命令发给主管，请他运行一次；不要自己去改被盯项目或 `~/.claude` 下的设置文件。
    在主管装好之前，会话照样记成在盯，主管问起时 `check` 能查到状态，只是停下时没法主动叫醒我。
 2. **被叫醒**：见上。
-3. **替主管回话**：主管说「让它 …」→ `reply <名称> "<话>"`，等 30–60 秒再读会话记录确认它收到并开工，把它的回应概括给主管。
-   `reply` 拒绝发送（它在干活或停在授权选择上）时，把原因告诉主管，不要换别的办法硬发。
-   **给被盯的会话发消息只用 `reply`**，不要用 Claude Code 自带的会话间发消息（SendMessage 等）。被盯的会话常常开着跳过权限确认的模式，
-   别的会话发来的消息会被拦下，弹出“Deliver this message to Claude / Deny”等主管手动确认，5 分钟没人点就丢掉，等于没发。
+3. **替主管回话**：主管说「让它 …」→
+   1. 运行 `reply-check <名称>`。退出码 3（`crossSessionInbound` 不是 `accept` 或确认不了）→ 把它输出的提醒原样转给主管，
+      请主管设置好再说，这次不发；退出码 2 → 找不到会话，把候选列给主管确认。
+   2. 检查通过 → 用 `ListAgents` 找到这个会话（名称对得上 `reply-check` 输出的会话），用 `SendMessage` 把主管的话发给它，
+      消息开头写明「主管让我转告：」。不要用 AppleScript 往终端里打字，Roster 沙箱不允许控制“终端”。
+   3. 等 30–60 秒再读会话记录确认它收到并开工，把它的回应概括给主管。
+   会话间发消息需要 Claude Code v2.1.224 及以上；`ListAgents` 里找不到这个会话时，告诉主管做不了，不要换别的办法硬发。
 4. **解除**：主管说「不用盯了」「别盯梢了」→ `remove <名称>`（或 `all`）。
 
 ## 注意
@@ -71,6 +77,5 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
 - dws 登录会过期（refresh 约 30 天）；`check` 报【叫醒】失败、原因是未登录/鉴权失败时，请主管重新 `dws auth login`。
 - 本技能目录被删或搬走前请主管运行 `uninstall`，否则 `~/.claude/settings.json` 里会留下失效的 hook（脚本不在时 hook 直接跳过，不影响会话）。
   搬到新位置后在新位置重新 `install`。
-- `reply` 只支持 macOS 自带 Terminal；会话不在 Terminal 里时直说做不了，不要改用会话间发消息代替。
-- 第一次 `reply` 时 macOS 会问是否允许控制“终端”，请主管点允许；之后报“不允许发送 Apple 事件”之类的错，
-  请主管到“系统设置 → 隐私与安全性 → 自动化”里打开对应的“终端”开关。
+- `crossSessionInbound: accept` 对本机所有发消息的会话都放行，不能只放行我一个；发过去的话会被对方当成指令执行。
+  只转主管明确说过的话，不自己加指令。

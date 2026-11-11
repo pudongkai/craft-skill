@@ -7,7 +7,7 @@
   watch.py remove <名称|会话id|all>  不再盯
   watch.py list                     正在盯的会话
   watch.py check                    检查所有在盯的会话；没有新情况输出 OK，否则每个会话一段
-  watch.py reply <名称|会话id> <文字>  在会话所在的终端标签里替主管输入一句话并回车（仅 macOS Terminal）
+  watch.py reply-check <名称|会话id>  替主管回话前检查：找到会话，确认 crossSessionInbound 是 accept
   watch.py install                  把 hook 注册进 ~/.claude/settings.json（首次使用时由主管运行一次）
   watch.py uninstall                删掉注册的 hook
 
@@ -15,7 +15,7 @@
       ~/.claude/projects/<目录>/<会话id>.jsonl 是会话记录。
 状态存在 ../state/watches.json。
 """
-import fcntl, glob, json, os, re, subprocess, sys, time
+import fcntl, glob, json, os, re, sys, time
 from datetime import datetime
 
 from hook import EVENTS, NEED_YOU, WAKE_FAILED, pending_agents
@@ -27,7 +27,6 @@ STATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STALL_MIN = 10        # 干活中某个操作超过这么久没结果：卡住或在等授权
 SETTLE_SEC = 60       # 停下后至少这么久才算真停（避免回合之间的瞬时空闲）
 WORKING = ("busy",)   # sessions/<pid>.json 的 status：只有 busy 算在干活；shell = 停着但开着后台 shell（如起了个服务），也算停下
-REPLY_OK = ("idle", "shell")   # 只在停在输入框时替主管回话；其它状态下回车可能落在授权选择框上，等于替主管点了同意
 ASK_WORDS = ("确认", "要不要", "是否", "选哪", "你决定", "请你", "等你", "回复", "confirm", "should I", "which")
 QUESTION_END = re.compile(r"[？?][\s*_`)）]*$")
 
@@ -358,32 +357,36 @@ def cmd_check(w, live):
     print("\n\n".join(out) if out else "OK")
 
 
-def cmd_reply(key, words, w, live):
+def inbound_setting():
+    """用户级设置里的 crossSessionInbound；读不到设置文件时返回 None。"""
+    try:
+        d = json.load(open(USER_SETTINGS)) if os.path.exists(USER_SETTINGS) else {}
+    except (OSError, ValueError):
+        return None
+    return d.get("crossSessionInbound", "")
+
+
+INBOUND_TIP = ("请主管在任意一个 Claude Code 会话里打开 /config，把「Messages from your other sessions」改成接受；"
+               '或在 ~/.claude/settings.json 里加一行 "crossSessionInbound": "accept"')
+
+
+def cmd_reply_check(key, w, live):
+    """替主管回话前的检查：找到要发给的会话，确认消息不会被拦下等确认。真正发送用 Claude Code 的会话间发消息。"""
     hits = [x for x in live if x.get("sessionId") == (w.get(key) or {}).get("sessionId")] or find(key, live)
     if len(hits) != 1:
         print("找不到唯一的会话"); sys.exit(2)
     s = hits[0]
-    if s.get("status") not in REPLY_OK:
-        print(f"它现在是 {s.get('status')}，不在等输入（可能在干活或停在授权选择上），这时回车可能替你点了同意，没有发送"); sys.exit(2)
-    tty = subprocess.run(["ps", "-o", "tty=", "-p", str(s["pid"])], capture_output=True, text=True).stdout.strip()
-    if not tty or "?" in tty:
-        print("这个会话不在终端里运行，没法替你输入"); sys.exit(2)
-    text = " ".join(" ".join(words).split()).replace("\\", "\\\\").replace('"', '\\"')
-    script = f'''tell application "Terminal"
-repeat with w in windows
-repeat with t in tabs of w
-if tty of t is "/dev/{tty}" then
-do script "{text}" in t
-delay 1
-do script "" in t
-return "sent"
-end if
-end repeat
-end repeat
-return "not found"
-end tell'''
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    print(r.stdout.strip() or r.stderr.strip())
+    print(f"会话：{s.get('name') or '(未命名)'}\t{s.get('status')}\t{s['sessionId']}\t{s.get('cwd')}")
+    v = inbound_setting()
+    if v == "accept":
+        print("crossSessionInbound = accept，发过去的消息会直接交给它")
+        return
+    if v is None:
+        print("读不到 ~/.claude/settings.json，确认不了 crossSessionInbound 的设置；发过去的消息可能被拦下等主管确认。" + INBOUND_TIP)
+    else:
+        print(f"crossSessionInbound 是「{v or '未设置'}」，不是 accept：对方开着跳过权限确认的模式时，"
+              "消息会被拦下等主管在终端里点确认，5 分钟没人点就丢掉。" + INBOUND_TIP)
+    sys.exit(3)
 
 
 def cmd_remove(key, w):
@@ -422,8 +425,8 @@ def main():
         cmd_install()
     elif cmd == "uninstall":
         cmd_uninstall()
-    elif cmd == "reply":
-        cmd_reply(a[1], a[2:], w, live)
+    elif cmd == "reply-check":
+        cmd_reply_check(a[1], w, live)
     else:
         print(__doc__)
 
