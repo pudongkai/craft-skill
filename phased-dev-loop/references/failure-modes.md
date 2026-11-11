@@ -10,6 +10,8 @@
 | F4 | 同一项目多个会话互相干扰 | 会话收到别的会话所开发方案的提示；拦截计数被几个会话共用，超过上限后每次停下都直接放行 `ACTIVE` 改成每行一份方案，hook 按本会话记录里最后提到的方案判断；拦截计数按会话分开 |
 | F5 | Stop hook 完全不生效 | 每次停下都报 hook 执行失败：`"${CLAUDE_SKILL_DIR}/scripts/stop_guard.py"` 找不到文件（exitCode 2），SKILL.md 里写的其实已经是写死的全路径 `$HOME/.claude/skills/phased-dev-loop/scripts/stop_guard.py`——Claude Code（2.1.263 实测）加载 SKILL.md 的 `hooks:` 声明时会把命令里指向 skill 目录的部分自动改写成 `${CLAUDE_SKILL_DIR}`，而这个变量在 Stop 事件里取不到值，等于白改。客户端 bug，改 SKILL.md 文本解决不了 | 变通：不用 SKILL.md 的 `hooks:` 自动声明，把 `stop_guard.py` 复制一份到目标项目内（如 `.claude/hooks/stop_guard.py`），在该项目 `.claude/settings.local.json` 里用 `$CLAUDE_PROJECT_DIR` 手写注册 Stop hook（这条路径不经过 skill 的 hooks 声明，不受此 bug 影响）。写这两处需要项目的文件写权限，不在技能本身能自动处理的范围内 |
 
+| F6 | 同一个功能写了好几遍 | 代码审查时发现同样的逻辑（工具方法、数据转换、校验、查询）在多个阶段或多个模块里各写了一份。原因：各阶段、各子 agent 只看自己的范围，动手前没查项目里和前面阶段已有的实现；并行的子 agent 互相看不到对方的代码 | 编码约束 C6；单轮流程第 3 步动手前先查现成实现；并行开发时子 agent 不自己新写通用逻辑，合并后统一对比去重；tech-design 方案里列出可复用的已有代码，并把多个阶段共用的逻辑安排在一个阶段里先做 |
+
 <!-- 新增问题模板：
-| F6 | <一句话问题> | <具体表现> | <新增的规则编号 / 机制> |
+| F7 | <一句话问题> | <具体表现> | <新增的规则编号 / 机制> |
 -->
