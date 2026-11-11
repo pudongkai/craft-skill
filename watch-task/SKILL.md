@@ -9,9 +9,10 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
 | 命令 | 作用 |
 |---|---|
 | `sessions` | 列出本机正在跑的 Claude Code 会话：名称、busy/idle、pid、会话 id、目录 |
-| `add <名称\|会话id\|pid>` | 开始盯，并把 hook 注册进那个会话的项目（名称就是主管给会话起的名字，如「clauve订阅」） |
-| `remove <名称\|会话id\|all>` | 解除；该项目没有在盯的会话了就删掉 hook |
-| `list` | 现在在盯哪些、各自状态 |
+| `add <名称\|会话id\|pid>` | 开始盯（名称就是主管给会话起的名字，如「clauve订阅」）。只写本技能的 `state/`，不改被盯项目的文件；hook 还没注册时会提示 |
+| `remove <名称\|会话id\|all>` | 解除 |
+| `list` | 现在在盯哪些、各自状态；hook 没注册时第一行提示 |
+| `install` / `uninstall` | 把 hook 注册进（或删出）用户级 `~/.claude/settings.json`。**由主管在终端运行**，见“首次使用” |
 | `check` | 检查所有在盯的会话（含 hook 记下的事件）；没新情况输出 `OK`，否则每个会话一段 `【名称】…`；叫醒消息没发出去时多一段 `【叫醒】…` |
 | `reply <名称> <文字>` | 在那个会话所在的 Terminal 标签里替主管输入一句并回车（长文字会被当成粘贴留在输入框，所以脚本会再补一次回车）；只在它停在输入框（idle / shell）时发 |
 
@@ -21,12 +22,15 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
 2. 照 `config.example.json` 写 `state/config.json`：`dws_profile` 取 `DWS_SHIM_DISABLE=1 dws profile list` 里主管那条的 `profile`；
    `chat_id` 是主管和你单聊的会话 id（【当前会话】里的会话 ID）；dws 不在 `~/.local/bin/dws` 时填 `dws`。
 3. 用 dws 以主管身份往这个单聊发一条测试消息（`chat +messages-send --as user --chat-id … --text … --yes`，带 `--profile`、环境变量 `DWS_SHIM_DISABLE=1`），确认你被叫醒。
+4. 请主管在自己的终端运行一次 `python3 "<本技能目录>/scripts/watch.py" install`（把路径拼成绝对路径发给主管）。
+   这一步要写 `~/.claude/settings.json`，不在我能写的目录里，所以必须由主管来做；只需要做一次，以后盯哪个会话都不用再改设置。
 没配 `state/config.json` 时 hook 只记事件、不叫醒，只能在主管问起时 `check`。
 
 ## 怎么叫醒我（不靠定时任务）
 
-`add` 把 `scripts/hook.py` 临时注册到被盯会话项目的 `.claude/settings.local.json`（Stop / Notification / SessionEnd；
-别人的设置原样保留，`remove` 时只删我们加的，文件因此变空就删文件）。被盯会话一触发：
+`install` 把 `scripts/hook.py` 注册到用户级 `~/.claude/settings.json`（Stop / Notification / SessionEnd；别人的设置原样保留，
+`uninstall` 时只删我们加的）。本机所有会话停下时都会运行它，hook 按 `state/watches.json` 里的会话 id 过滤，没在盯的直接跳过。
+被盯会话一触发：
 
 1. hook 把事件记进 `state/events.jsonl`（最后一句话、要授权的提示、还没交回结果的后台子 agent 数）；
 2. 用 dws **以主管身份**往主管和我的单聊发一条 `[盯任务] <名称> 停下了 / 需要你处理：… / 会话退出了。运行盯任务技能的 check…`，
@@ -52,6 +56,8 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
 ## 流程
 
 1. **开始盯**：主管说「盯一下 X」「盯梢 X」→ `sessions` 找到对应会话（对不上或有多个就把候选列给主管确认）→ `add`。
+   `add` 提示 hook 没注册时，照提示把 `install` 命令发给主管，请他运行一次；不要自己去改被盯项目或 `~/.claude` 下的设置文件。
+   在主管装好之前，会话照样记成在盯，主管问起时 `check` 能查到状态，只是停下时没法主动叫醒我。
 2. **被叫醒**：见上。
 3. **替主管回话**：主管说「让它 …」→ `reply <名称> "<话>"`，等 30–60 秒再读会话记录确认它收到并开工，把它的回应概括给主管。
    `reply` 拒绝发送（它在干活或停在授权选择上）时，把原因告诉主管，不要换别的办法硬发。
@@ -61,5 +67,6 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
 
 - 我自己起后台进程用 roster 发钉钉消息**发不出去**（只有回复对话的时候才有权限），所以走 dws 主管身份叫醒我，再由我在对话里回复。
 - dws 登录会过期（refresh 约 30 天）；`check` 报【叫醒】失败、原因是未登录/鉴权失败时，请主管重新 `dws auth login`。
-- 本技能目录被删或搬走前先 `remove all`，否则被盯项目的 `settings.local.json` 里会留下失效的 hook（脚本不在时 hook 直接跳过，不影响会话）。
+- 本技能目录被删或搬走前请主管运行 `uninstall`，否则 `~/.claude/settings.json` 里会留下失效的 hook（脚本不在时 hook 直接跳过，不影响会话）。
+  搬到新位置后在新位置重新 `install`。
 - `reply` 只支持 macOS 自带 Terminal；会话不在 Terminal 里时直说做不了。

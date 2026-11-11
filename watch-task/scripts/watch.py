@@ -8,6 +8,8 @@
   watch.py list                     正在盯的会话
   watch.py check                    检查所有在盯的会话；没有新情况输出 OK，否则每个会话一段
   watch.py reply <名称|会话id> <文字>  在会话所在的终端标签里替主管输入一句话并回车（仅 macOS Terminal）
+  watch.py install                  把 hook 注册进 ~/.claude/settings.json（首次使用时由主管运行一次）
+  watch.py uninstall                删掉注册的 hook
 
 数据：~/.claude/sessions/<pid>.json 里有会话名称和 status（busy=在干活，其它=停下），
       ~/.claude/projects/<目录>/<会话id>.jsonl 是会话记录。
@@ -33,14 +35,13 @@ QUESTION_END = re.compile(r"[？?][\s*_`)）]*$")
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook.py")
 HOOK_EVENTS = ("Stop", "Notification", "SessionEnd")
 HOOK_TAG = "watch-task/scripts/hook.py"   # 认出哪些 hook 是我们加的
-
-
-def _settings(cwd):
-    return os.path.join(cwd, ".claude", "settings.local.json")
+# hook 注册在用户级设置里，所有会话都会触发，hook.py 按 watches.json 里的会话 id 过滤。
+# 这样 add 只写本技能的 state/，不用去改被盯项目的文件。
+USER_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
 
 
 def write_json(path, data, indent=2):
-    """先写临时文件再改名：Claude Code 也会写 settings.local.json，避免它读到写了一半的文件。"""
+    """先写临时文件再改名：Claude Code 也会写 settings.json，避免它读到写了一半的文件。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
@@ -62,32 +63,54 @@ def _drop_ours(hooks):
             hooks.pop(ev)
 
 
-def hook_install(cwd):
-    """把 hook.py 临时注册进项目的 settings.local.json；已有我们的旧条目就换成新的。
-    命令先检查脚本在不在：本技能目录被删了也不会让被盯项目的每次停下都报错。"""
-    p = _settings(cwd)
-    d = json.load(open(p)) if os.path.exists(p) else {}
+def _our_commands(d):
+    return [h.get("command", "") for ev in HOOK_EVENTS for g in d.get("hooks", {}).get(ev, [])
+            for h in g.get("hooks", []) if HOOK_TAG in h.get("command", "")]
+
+
+def hook_state():
+    """返回 'ok'（已注册且指向本技能目录）、'other'（指向别的副本）、'missing' 或 'unknown'（读不了设置文件）。"""
+    try:
+        d = json.load(open(USER_SETTINGS)) if os.path.exists(USER_SETTINGS) else {}
+    except (OSError, ValueError):
+        return "unknown"
+    cmds = _our_commands(d)
+    if not cmds:
+        return "missing"
+    return "ok" if len(cmds) == len(HOOK_EVENTS) and all(HOOK in c for c in cmds) else "other"
+
+
+def cmd_install():
+    """把 hook.py 注册进用户级 settings.json，只需做一次；已有我们的旧条目就换成新的。
+    命令先检查脚本在不在：本技能目录被删了也不会让每次停下都报错。"""
+    d = json.load(open(USER_SETTINGS)) if os.path.exists(USER_SETTINGS) else {}
     hooks = d.setdefault("hooks", {})
     _drop_ours(hooks)
     cmd = f'[ -f "{HOOK}" ] && python3 "{HOOK}"; exit 0'
     for ev in HOOK_EVENTS:
         hooks.setdefault(ev, []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
-    write_json(p, d)
+    write_json(USER_SETTINGS, d)
+    print(f"hook 已注册到 {USER_SETTINGS}，指向 {HOOK}")
 
 
-def hook_uninstall(cwd):
-    """删掉我们加的 hook；文件因此变空就整个删掉，别人的设置原样保留。"""
-    p = _settings(cwd)
-    if not os.path.exists(p):
+def cmd_uninstall():
+    if not os.path.exists(USER_SETTINGS):
+        print("没有注册过")
         return
-    d = json.load(open(p))
+    d = json.load(open(USER_SETTINGS))
     _drop_ours(d.get("hooks", {}))
     if not d.get("hooks"):
         d.pop("hooks", None)
-    if d:
-        write_json(p, d)
-    else:
-        os.remove(p)
+    write_json(USER_SETTINGS, d)
+    print(f"已从 {USER_SETTINGS} 删掉盯任务的 hook")
+
+
+HOOK_HINT = {
+    "missing": "还没注册 hook，它停下时叫不醒我",
+    "other": "注册的 hook 指向别的技能副本，它停下时叫不醒我",
+    "unknown": "读不到 ~/.claude/settings.json，确认不了 hook 有没有注册",
+}
+INSTALL_TIP = f'请主管在终端运行一次：python3 "{os.path.abspath(__file__)}" install'
 
 
 def take_jsonl(path):
@@ -277,13 +300,16 @@ def cmd_add(key, w, live):
     name = s.get("name") or s["sessionId"][:8]
     path = log_path(s["sessionId"], s.get("cwd"))
     rows = read_rows(path) if path else []
-    hook_install(s.get("cwd"))   # 先注册 hook，成功了再记成在盯，避免记了却没 hook
     w[name] = {"sessionId": s["sessionId"], "cwd": s.get("cwd"), "since": time.strftime("%F %T"),
                "line": len(rows),
                # 加的时候已经停着的，就当已报过，不立刻重复报
                "stop_key": None if s.get("status") in WORKING else last_words(rows)[0]}
     save(w)
-    print(f"开始盯：{name}（{s.get('status')}）{s.get('cwd')}；hook 已注册")
+    state = hook_state()
+    if state == "ok":
+        print(f"开始盯：{name}（{s.get('status')}）{s.get('cwd')}")
+    else:
+        print(f"开始盯：{name}（{s.get('status')}）{s.get('cwd')}；但{HOOK_HINT[state]}。{INSTALL_TIP}")
 
 
 def hook_hints(rep, evs):
@@ -322,9 +348,7 @@ def cmd_check(w, live):
         if rep:
             out.append(f"【{name}】{rep}")
         if done:
-            cwd = w.pop(name).get("cwd")
-            if cwd and not any(v.get("cwd") == cwd for v in w.values()):
-                hook_uninstall(cwd)
+            w.pop(name)
     save(w)
     fail = wake_failures()
     if fail:
@@ -362,11 +386,9 @@ end tell'''
 
 def cmd_remove(key, w):
     keys = list(w) if key == "all" else [k for k, v in w.items() if key in (k, v["sessionId"]) or v["sessionId"].startswith(key)]
-    gone = {w.pop(k).get("cwd") for k in keys}
+    for k in keys:
+        w.pop(k)
     save(w)
-    for cwd in gone:
-        if cwd and not any(v.get("cwd") == cwd for v in w.values()):
-            hook_uninstall(cwd)
     print("已停止盯：" + ("、".join(keys) or "（没有匹配的）") + f"；还在盯 {len(w)} 个")
 
 
@@ -384,6 +406,9 @@ def main():
     elif cmd == "remove":
         cmd_remove(a[1], w)
     elif cmd == "list":
+        state = hook_state()
+        if state != "ok":
+            print(f"注意：{HOOK_HINT[state]}。{INSTALL_TIP}")
         if not w:
             print("没有在盯的会话")
         for k, v in w.items():
@@ -391,6 +416,10 @@ def main():
             print(f"{k}\t{s.get('status') if s else '已退出'}\t从 {v['since']} 开始\t{v.get('cwd')}")
     elif cmd == "check":
         cmd_check(w, live)
+    elif cmd == "install":
+        cmd_install()
+    elif cmd == "uninstall":
+        cmd_uninstall()
     elif cmd == "reply":
         cmd_reply(a[1], a[2:], w, live)
     else:

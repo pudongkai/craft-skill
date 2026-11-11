@@ -2,8 +2,8 @@
 """Claude Code hook（Stop / Notification / SessionEnd）：被盯的会话状态一变，就记进 ../state/events.jsonl，
 并用 dws 以主管身份给数字员工发一条钉钉消息把它叫醒（醒来跑 watch.py check 再汇报）。
 
-由 watch.py add 临时注册到被盯会话所在项目的 .claude/settings.local.json，remove 时删掉。
-同一项目里没被盯的会话也会触发，这里按 session_id 过滤。必须快、不输出、永远 exit 0，不能影响会话本身：
+由 watch.py install 注册到用户级 ~/.claude/settings.json，本机所有会话都会触发。
+这里按 session_id 过滤，只处理在盯的会话。必须快、不输出、永远 exit 0，不能影响会话本身：
 发消息交给后台子进程（hook.py --send），hook 立即返回。
 """
 import fcntl, json, os, re, subprocess, sys, time
