@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude Code hook（Stop / Notification / SessionEnd）：被盯的会话状态一变，就记进 ../state/events.jsonl，
-并用 dws 以主管身份给数字员工发一条钉钉消息把它叫醒（醒来跑 watch.py check 再汇报）。
+并用 dws 以数字员工的账号直接给主管发一条钉钉单聊通知（哪个会话、为什么停、最后说了什么）。
 
 由 watch.py install 注册到用户级 ~/.claude/settings.json，本机所有会话都会触发。
 这里按 session_id 过滤，只处理在盯的会话。必须快、不输出、永远 exit 0，不能影响会话本身：
@@ -20,6 +20,7 @@ LOCK_BUSY = re.compile(r"timeout acquiring token lock|bus child did not signal r
 NOT_SENT = re.compile(r'"executed"\s*:\s*false|"dry_run"\s*:\s*true')
 # 需要主管处理的 Notification；idle_prompt（空闲等输入）由 Stop 报，其余（agent_completed、auth_success 等）不报
 NEED_YOU = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input")
+LAST_CHARS = 300
 TASK_DONE = re.compile(r"<task-id>([0-9a-f]+)</task-id>.*?<status>(?:completed|failed|killed|stopped)</status>")
 
 
@@ -77,21 +78,31 @@ def needs_you(ev):
     return "waiting for your input" not in (ev.get("message") or "")
 
 
-def wake(name, why):
-    """没配 state/config.json 就只记事件；配了就起后台子进程发消息。"""
+def notice_text(name, why, last):
+    text = f"[盯任务] {name} {why}"
+    last = " ".join((last or "").split())
+    if last:
+        text += "\n它最后说：" + (last if len(last) <= LAST_CHARS else "…" + last[-LAST_CHARS:])
+    return text + "\n要我处理就回 Simon 一句，比如「让它…」或「看看怎么回事」。"
+
+
+def wake(name, why, last=""):
+    """没配 state/config.json 就只记事件；配了就起后台子进程发通知。"""
     if not os.path.exists(os.path.join(STATE_DIR, "config.json")):
         return
-    text = f"[盯任务] {name} {why}。运行盯任务技能的 check，把情况汇报给我。"
+    text = notice_text(name, why, last)
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "--send", name, text],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      cwd="/tmp", start_new_session=True)
 
 
 def send(name, text):
-    """发叫醒消息；抢不到 dws 锁就等一会儿重试。最终没发出去记进 wake-failed.jsonl，check 时报给主管。"""
+    """发通知；抢不到 dws 锁就等一会儿重试。最终没发出去记进 wake-failed.jsonl，check 时报给主管。
+    配了 to_user_id 就单聊发给这个人，否则发到 chat_id 指定的会话。"""
     cfg = json.load(open(os.path.join(STATE_DIR, "config.json")))
+    target = ["--user", cfg["to_user_id"]] if cfg.get("to_user_id") else ["--chat-id", cfg["chat_id"]]
     cmd = [cfg.get("dws") or DWS, "chat", "+messages-send", "--profile", cfg["dws_profile"], "--as", "user",
-           "--chat-id", cfg["chat_id"], "--text", text,
+           *target, "--text", text,
            "--idempotency-key", f"watch-{name}-{int(time.time())}", "--yes"]
     env = dict(os.environ, DWS_SHIM_DISABLE="1")
     err = ""
@@ -132,8 +143,9 @@ def main():
                           "notification_type": ev.get("notification_type"),
                           "last": (ev.get("last_assistant_message") or "")[-800:], "background_tasks": bg})
 
+    last = ev.get("last_assistant_message") or ""
     if kind == "Stop" and not bg:
-        wake(name, "停下了")
+        wake(name, "停下了", last)
     elif kind == "Notification" and needs_you(ev):
         wake(name, "需要你处理：" + msg[:80])
     elif kind == "SessionEnd":

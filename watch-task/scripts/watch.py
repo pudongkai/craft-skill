@@ -333,7 +333,7 @@ def wake_failures():
     if not fails:
         return None
     last = fails[-1]
-    return (f"【叫醒】有 {len(fails)} 次叫醒消息没发出去，最近一次（{last.get('name')}）：{short(last.get('error'), 200)}。"
+    return (f"【通知】有 {len(fails)} 次通知没发出去，最近一次（{last.get('name')}）：{short(last.get('error'), 200)}。"
             "没登录或鉴权失败的话，请主管重新 dws auth login")
 
 
