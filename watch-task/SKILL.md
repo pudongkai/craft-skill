@@ -61,6 +61,8 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
 2. **被叫醒**：见上。
 3. **替主管回话**：主管说「让它 …」→ `reply <名称> "<话>"`，等 30–60 秒再读会话记录确认它收到并开工，把它的回应概括给主管。
    `reply` 拒绝发送（它在干活或停在授权选择上）时，把原因告诉主管，不要换别的办法硬发。
+   **给被盯的会话发消息只用 `reply`**，不要用 Claude Code 自带的会话间发消息（SendMessage 等）。被盯的会话常常开着跳过权限确认的模式，
+   别的会话发来的消息会被拦下，弹出“Deliver this message to Claude / Deny”等主管手动确认，5 分钟没人点就丢掉，等于没发。
 4. **解除**：主管说「不用盯了」「别盯梢了」→ `remove <名称>`（或 `all`）。
 
 ## 注意
@@ -69,4 +71,6 @@ Notification 只在要授权、要回答提问（`permission_prompt`、`elicitat
 - dws 登录会过期（refresh 约 30 天）；`check` 报【叫醒】失败、原因是未登录/鉴权失败时，请主管重新 `dws auth login`。
 - 本技能目录被删或搬走前请主管运行 `uninstall`，否则 `~/.claude/settings.json` 里会留下失效的 hook（脚本不在时 hook 直接跳过，不影响会话）。
   搬到新位置后在新位置重新 `install`。
-- `reply` 只支持 macOS 自带 Terminal；会话不在 Terminal 里时直说做不了。
+- `reply` 只支持 macOS 自带 Terminal；会话不在 Terminal 里时直说做不了，不要改用会话间发消息代替。
+- 第一次 `reply` 时 macOS 会问是否允许控制“终端”，请主管点允许；之后报“不允许发送 Apple 事件”之类的错，
+  请主管到“系统设置 → 隐私与安全性 → 自动化”里打开对应的“终端”开关。
