@@ -20,7 +20,7 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
 
 1. 本机 dws 登录了你（数字员工）自己的钉钉账号（`DWS_SHIM_DISABLE=1 dws profile list` 里能看到你那条）。
 2. 照 `config.example.json` 写 `state/config.json`：`dws_profile` 取上面列表里**你自己**那条的 `profile`；
-   `to_user_id` 是主管的 userId（`roster contact me` 的 supervisor）；dws 不在 `~/.local/bin/dws` 时填 dws 的完整路径。
+   `to_user_id` 是主管的 userId（`roster contact me` 的 supervisor）；`open_dingtalk_id` 填主管的 openDingTalkId（`dws contact user search --query <主管姓名>` 查到），填了就直接发，不用每次按 userId 查通讯录（这一步偶尔会查不到，导致通知发不出去）；dws 不在 `~/.local/bin/dws` 时填 dws 的完整路径。
    `state/` 不在仓库里，同步技能时要保留，否则配置会被清掉。
 3. 请主管跑一次 `python3 "<本技能目录>/scripts/hook.py" --send 测试 "[盯任务] 测试通知"`，确认收到你发的单聊。
 4. 请主管在自己的终端运行一次 `python3 "<本技能目录>/scripts/watch.py" install`（把路径拼成绝对路径发给主管）。
@@ -41,7 +41,7 @@ description: 主管让你「盯着」「盯梢」「盯一下」他电脑上某�
    停下时附上它最后说的话（截到 300 字），结尾提示主管有事回我一句。hook 跑在主管的 Claude 进程里，不受我的沙箱限制。
    配置在 `state/config.json`（`dws_profile` 我的 dws 账号、`to_user_id` 主管的 userId；没有 `to_user_id` 时发到 `chat_id`），
    发送记录在 `state/wake.log`。
-   和 Roster 抢 dws 锁失败会自动重试；最终没发出去（含 dws 只预演没真发）记进 `state/wake-failed.jsonl`，下次 `check` 时报出来。
+   和 Roster 抢 dws 锁失败、按 userId 查通讯录偶尔查不到时会自动重试；最终没发出去（含 dws 只预演没真发）记进 `state/wake-failed.jsonl`，下次 `check` 时报出来。
 
 不发通知的情况：Stop 时会话记录里还有没交回结果的后台子 agent（没真停，交回后会自己接着干）；
 Notification 只在要授权、要回答提问（`permission_prompt`、`elicitation_*`、`agent_needs_input`）时通知，空闲等输入由 Stop 报，其余类型不报。

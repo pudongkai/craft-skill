@@ -16,7 +16,8 @@ DWS = os.path.expanduser("~/.local/bin/dws")
 SEND_TRIES = 4
 RETRY_SEC = 15
 # dws 读令牌要拿全机唯一的 ~/.dws/.data.lock，和 Roster 的 dws 接收端抢锁失败时报这些，等一会儿重试即可
-LOCK_BUSY = re.compile(r"timeout acquiring token lock|bus child did not signal readiness", re.I)
+# 可以重试的失败：抢 dws 锁失败；按 userId 查通讯录偶尔查不到（同一个 userId 隔一会儿就能查到）
+RETRYABLE = re.compile(r"timeout acquiring token lock|bus child did not signal readiness|没有精确匹配的 userId", re.I)
 NOT_SENT = re.compile(r'"executed"\s*:\s*false|"dry_run"\s*:\s*true')
 # 需要主管处理的 Notification；idle_prompt（空闲等输入）由 Stop 报，其余（agent_completed、auth_success 等）不报
 NEED_YOU = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input")
@@ -98,9 +99,14 @@ def wake(name, why, last=""):
 
 def send(name, text):
     """发通知；抢不到 dws 锁就等一会儿重试。最终没发出去记进 wake-failed.jsonl，check 时报给主管。
-    配了 to_user_id 就单聊发给这个人，否则发到 chat_id 指定的会话。"""
+    单聊目标优先用 open_dingtalk_id（直接发，不经过通讯录查询），其次 to_user_id，都没有时发到 chat_id 指定的会话。"""
     cfg = json.load(open(os.path.join(STATE_DIR, "config.json")))
-    target = ["--user", cfg["to_user_id"]] if cfg.get("to_user_id") else ["--chat-id", cfg["chat_id"]]
+    if cfg.get("open_dingtalk_id"):
+        target = ["--open-dingtalk-id", cfg["open_dingtalk_id"]]
+    elif cfg.get("to_user_id"):
+        target = ["--user", cfg["to_user_id"]]
+    else:
+        target = ["--chat-id", cfg["chat_id"]]
     cmd = [cfg.get("dws") or DWS, "chat", "+messages-send", "--profile", cfg["dws_profile"], "--as", "user",
            *target, "--text", text,
            "--idempotency-key", f"watch-{name}-{int(time.time())}", "--yes"]
@@ -117,7 +123,7 @@ def send(name, text):
         if ok and not NOT_SENT.search(out):
             return
         err = "dws 只做了预演，没有真正发送" if ok else out[-300:]
-        if not LOCK_BUSY.search(out):
+        if not RETRYABLE.search(out):
             break
         time.sleep(RETRY_SEC)
     append_jsonl(WAKE_FAILED, {"t": time.time(), "name": name, "text": text, "error": err})
