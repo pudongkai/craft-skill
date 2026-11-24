@@ -69,6 +69,7 @@
 | TC-23 | AC-1、AC-3、AC-6 | 真实 Claude Code 会话 | 在任意会话里 `run_in_background` 起 `sleep 30`，再起一条 `sleep 600` 并用 TaskStop 停掉；等 30 秒后在 `~/.claude/projects/<目录>/<会话>.jsonl` 里 `grep -n 'backgroundTaskId\|task-notification\|task_id'` | 能看到两条 `backgroundTaskId`；`sleep 30` 有 queue-operation 或 attachment 里的 `<task-notification>`，`<status>completed</status>`；`sleep 600` 有带 `task_id` 的 TaskStop 结果。字段名与第 3 节造的数据一致（不一致时记缺陷，自动化用例的造数随之修正） | 手工 |
 | TC-24 | AC-13 | 开发提交后 | `grep -n "import\|def " dev-flow/scripts/flow_guard.py team-pm/scripts/worker_guard.py`，并查看 `git diff <基线> -- dev-flow team-pm/scripts phased-dev-loop` | 两个文件只从 stop_guard 导入函数得到未结束后台任务数，文件里没有出现 `backgroundTaskId`、`task-notification`、`task_id` 的解析代码 | 手工 |
 | TC-25 | AC-14 | 开发和 QA 测试代码都已提交 | `python3 -m unittest discover -s team-pm/tests`；另跑开发新增的 hook 测试（位置以开发单产出为准） | 全部通过；开发新增测试至少覆盖 AC-1、AC-3、AC-6、AC-7、AC-8 的后台 Bash 情况（按测试名和用例内容逐条对照） | 手工 |
+| TC-26 | AC-2a | 需拦截状态；会话记录先有 `b6r5u7d58` 的完成通知（queue-operation，另一组用 attachment），之后才有它的 Bash 后台启动行 | 分别调用三个 hook | 三个都拦截，queue-operation 组的 `reason` 与没有后台任务的对照输出逐字相同 | 自动化（QA，team-pm/tests/test_guard_bg_bash.py） |
 
 ## 5. 回归范围
 
@@ -83,4 +84,5 @@
 - AC-12 “文件不存在时按无后台任务处理”：stop_guard / flow_guard 读不到会话记录时只在 ACTIVE / 状态文件只有一份时才知道该判断哪一份（需求说“按现有做法”），所以 TC-13 的数据只放一份方案 / 状态文件。
 - TC-16 的“不限定字符集”按需求 BR-3 理解为任意非空字符串、原样比对；不测含 `<`、`>` 的 id（会破坏通知标签本身）。
 - TC-21 失败 TaskStop 的具体格式需求没写明，按“`toolUseResult` 不含 `task_id`”理解；需求第 6 节说只认带 `task_id` 的成功结果，与此一致，不建答疑单。
+- TC-26 在测试单 0006 中补充：需求文档在计划完成后新增了 AC-2a（完成通知先于启动记录写入时按已结束处理）。
 - 没有建答疑单。
