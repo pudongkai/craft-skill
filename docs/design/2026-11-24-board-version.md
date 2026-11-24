@@ -1,7 +1,7 @@
 # board.py version 子命令技术方案
 
 开发状态: TODO
-方案评审: 待评审
+方案评审: 通过（2026-11-24）
 需求来源: docs/prd/board-version.md
 作者: 开发（团队角色）　　日期: 2026-11-24
 
