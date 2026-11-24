@@ -1,6 +1,6 @@
 # board.py version 子命令技术方案
 
-开发状态: TODO
+开发状态: DONE
 方案评审: 通过（2026-11-24）
 需求来源: docs/prd/board-version.md
 作者: 开发（团队角色）　　日期: 2026-11-24
@@ -145,11 +145,12 @@ AC-6 后半（代码里除常量外没有硬编码 `0.1.0`）用 `grep -rn "0\.1
 
 ## 8. 开发计划
 
-- [ ] 阶段1：version 子命令及测试
+- [x] 阶段1：version 子命令及测试
   - 涉及模块：team-pm/scripts/board.py、team-pm/tests/test_board.py
   - 依赖：无
   - 内容：按 4.4 加 `VERSION` 常量、`NO_BOARD_COMMANDS`、`cmd_version`、子命令注册和 `main()` 跳过 `ensure_board()`；按第 7 节新增 `VersionTest` 用例。
   - 完成标准：`python3 -m unittest discover -s team-pm/tests` 全部通过（含新增用例）；`grep -rn "0\.1\.0" team-pm/` 只命中 `VERSION = "0.1.0"` 一行；`d=$(mktemp -d)/nb; TEAM_BOARD=$d python3 team-pm/scripts/board.py version && test ! -e "$d"` 输出两行且退出码 0。
+  - 验证记录：`python3 -m unittest discover -s team-pm/tests` 56 个用例全部通过（新增 `VersionTest` 9 个，含代码审查后补的“已建看板但没有事件”用例）；`grep -rn "0\.1\.0" team-pm/` 只命中 `team-pm/scripts/board.py:11:VERSION = "0.1.0"`；`TEAM_BOARD=<临时目录>/nb board.py version` 输出两行、退出码 0、目录未创建；`board.py --help` 列出 `version  打印脚本版本号和看板根目录`。AC-5 用例里 `project new` 不写事件，改为建项目后再调 `bs.append_event` 产生 `events.jsonl`。
 
 ## 9. 待确认问题
 

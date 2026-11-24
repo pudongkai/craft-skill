@@ -8,8 +8,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_dispatch  # noqa: E402
 import board_store as bs  # noqa: E402
 
+VERSION = "0.1.0"
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 SCHEDULED_ROLES = {"产品", "开发", "QA"}
+# 不需要看板目录存在的子命令，main() 不为它们创建看板
+NO_BOARD_COMMANDS = {"version"}
 
 
 # ---------- 调度：哪些单可以派 ----------
@@ -193,6 +196,7 @@ def build_parser():
     sub.add_parser("status", help="所有项目的进展").add_argument("project", nargs="?")
     sub.add_parser("events", help="打印事件").add_argument("--since", type=int, default=0)
     sub.add_parser("notify", help="config 里 notify 为 dws 时，用 watch-task 的钉钉单聊发一条通知").add_argument("text")
+    sub.add_parser("version", help="打印脚本版本号和看板根目录")
     return ap, sub
 
 
@@ -283,8 +287,14 @@ def cmd_notify(a):
     print("已发送")
 
 
+def cmd_version(a):
+    print(f"版本: {VERSION}")
+    print(f"看板根目录: {os.path.abspath(bs.board_root())}")
+
+
 COMMANDS = {"project": cmd_project, "item": cmd_item, "ready": cmd_ready,
-            "status": cmd_status, "events": cmd_events, "notify": cmd_notify}
+            "status": cmd_status, "events": cmd_events, "notify": cmd_notify,
+            "version": cmd_version}
 
 
 def main(argv=None):
@@ -292,7 +302,8 @@ def main(argv=None):
     board_dispatch.register(sub, COMMANDS)
     a = ap.parse_args(argv)
     try:
-        bs.ensure_board()
+        if a.cmd not in NO_BOARD_COMMANDS:
+            bs.ensure_board()
         COMMANDS[a.cmd](a)
     except bs.BoardError as e:
         print(f"错误：{e}", file=sys.stderr)

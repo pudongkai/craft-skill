@@ -6,7 +6,8 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 sys.path.insert(0, SCRIPTS)
@@ -238,6 +239,80 @@ class StatusTest(BoardTestCase):
         self.assertIn("0002 [待领取] 开发/方案", out)
         self.assertNotIn("0001 [", out)
         self.assertIn("已完成 1 张，共 2 张", out)
+
+
+class VersionTest(BoardTestCase):
+    def snapshot(self, root):
+        files = sorted(os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs)
+        if not os.path.exists(bs.events_path()):
+            return files, None
+        with open(bs.events_path(), encoding="utf-8") as f:
+            return files, f.read()
+
+    def test_version_is_semver(self):
+        self.assertRegex(board.VERSION, r"^\d+\.\d+\.\d+$")
+
+    def test_default_root_under_home(self):
+        home = os.path.join(self.tmp.name, "home")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            os.environ.pop("TEAM_BOARD", None)
+            code, out = self.run_cli("version")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), [f"版本: {board.VERSION}",
+                                            f"看板根目录: {os.path.join(home, '.claude', 'team')}"])
+
+    def test_team_board_not_created(self):
+        root = os.path.join(self.tmp.name, "x-board")
+        with mock.patch.dict(os.environ, {"TEAM_BOARD": root}):
+            code, out = self.run_cli("version")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines()[1], f"看板根目录: {root}")
+        self.assertFalse(os.path.exists(root))
+
+    def test_tilde_expanded(self):
+        home = os.path.join(self.tmp.name, "home")
+        with mock.patch.dict(os.environ, {"HOME": home, "TEAM_BOARD": "~/my-board"}):
+            _, out = self.run_cli("version")
+        self.assertEqual(out.splitlines()[1], f"看板根目录: {os.path.join(home, 'my-board')}")
+        self.assertNotIn("~", out)
+
+    def test_existing_board_unchanged(self):
+        self.new_project()
+        bs.append_event("demo", "", "测试")
+        root = bs.board_root()
+        before = self.snapshot(root)
+        code, _ = self.run_cli("version")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.snapshot(root), before)
+
+    def test_board_without_events_unchanged(self):
+        bs.ensure_board()
+        root = bs.board_root()
+        before = self.snapshot(root)
+        self.run_cli("version")
+        self.assertEqual(self.snapshot(root), before)
+        self.assertIsNone(before[1])
+
+    def test_output_follows_constant(self):
+        with mock.patch.object(board, "VERSION", "0.2.0"):
+            _, out = self.run_cli("version")
+        self.assertEqual(out.splitlines()[0], "版本: 0.2.0")
+
+    def test_extra_argument_rejected(self):
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            board.main(["version", "extra"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertIn("unrecognized arguments", err.getvalue())
+
+    def test_help_lists_version(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            board.main(["--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("version", out.getvalue())
+        self.assertIn("打印脚本版本号和看板根目录", out.getvalue())
 
 
 if __name__ == "__main__":
