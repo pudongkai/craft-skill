@@ -126,15 +126,35 @@ def stop_session(short_id):
     run(["claude", "stop", short_id], timeout=30)
 
 
-def hook_settings(project, number):
+def user_theme():
+    """主会话的主题。auto 时按 macOS 深浅色模式换算成具体主题：后台会话没有终端，自己检测不到。"""
+    try:
+        with open(os.path.expanduser("~/.claude/settings.json"), encoding="utf-8") as f:
+            theme = json.load(f).get("theme") or "auto"
+    except (OSError, ValueError):
+        theme = "auto"
+    if theme != "auto":
+        return theme
+    try:
+        code, out = run(["defaults", "read", "-g", "AppleInterfaceStyle"], timeout=5, stdout_only=True)
+    except bs.BoardError:
+        return None
+    return "dark" if code == 0 and "Dark" in out else "light"
+
+
+def session_settings(project, number):
+    """角色会话的 --settings：Stop / Notification hook，以及和主会话一致的主题。"""
     guard = os.path.join(SCRIPTS_DIR, "worker_guard.py")
 
     def hook(extra=""):
         cmd = f'python3 "{guard}"{extra} --project {project} --item {number}'
         return [{"hooks": [{"type": "command", "command": cmd, "timeout": 30}]}]
 
-    return json.dumps({"hooks": {"Stop": hook(), "Notification": hook(" --event notification")}},
-                      ensure_ascii=False)
+    settings = {"hooks": {"Stop": hook(), "Notification": hook(" --event notification")}}
+    theme = bs.load_config().get("theme") or user_theme()
+    if theme:
+        settings["theme"] = theme
+    return json.dumps(settings, ensure_ascii=False)
 
 
 # ---------- 提示词 ----------
@@ -181,7 +201,7 @@ def launch_command(project_doc, item, prompt, resume_session):
     role = item.get("角色")
     cmd = ["claude", "--bg", "-n", f"team-{project_doc.get('项目')}-{bs.item_number(item)}",
            "--permission-mode", cfg["permission_mode"],
-           "--settings", hook_settings(project_doc.get("项目"), bs.item_number(item))]
+           "--settings", session_settings(project_doc.get("项目"), bs.item_number(item))]
     effort = (cfg.get("effort") or {}).get(role)
     model = (cfg.get("model") or {}).get(role)
     if effort:

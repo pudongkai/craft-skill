@@ -16,7 +16,7 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 ## 首次使用
 
 1. 这几个 skill 都装在 `~/.claude/skills/` 下：team-pm、team-product、team-dev、team-qa、tech-design、phased-dev-loop。
-2. 看板第一次运行时会自动建 `~/.claude/team/config.json`。按需要调整：`max_sessions`（全局同时运行的会话数，默认 4）、`max_sessions_per_project`（默认 2）、`permission_mode`（默认 `auto`）、`effort` 和 `model`（按角色设置，如 `{"产品": "medium"}`）、`notify`（`none`，或者 `dws`：要人确认时同时用 watch-task 的钉钉单聊通知）。
+2. 看板第一次运行时会自动建 `~/.claude/team/config.json`。按需要调整：`max_sessions`（全局同时运行的会话数，默认 4）、`max_sessions_per_project`（默认 2）、`permission_mode`（默认 `auto`）、`theme`（角色会话的主题，不写时跟主会话一致）、`effort` 和 `model`（按角色设置，如 `{"产品": "medium"}`）、`notify`（`none`，或者 `dws`：要人确认时同时用 watch-task 的钉钉单聊通知）。
 3. 项目仓库要先在 Claude Code 里信任过，否则后台会话起不来。`project new` 发现没信任时会提示，请用户在仓库目录运行一次 `claude` 并接受信任提示（可以让用户在输入框里输 `! cd <仓库> && claude`）。
 
 ## 立项

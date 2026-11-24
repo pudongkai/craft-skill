@@ -82,6 +82,7 @@ class DispatchTest(unittest.TestCase):
         settings = json.loads(argv[argv.index("--settings") + 1])
         self.assertIn("--project demo --item 0001", settings["hooks"]["Stop"][0]["hooks"][0]["command"])
         self.assertIn("--event notification", settings["hooks"]["Notification"][0]["hooks"][0]["command"])
+        self.assertIn(settings["theme"], ("light", "dark"))
         self.assertIn("item claim demo 0001 --resume", argv[-1])
         self.assertIn("team-product", argv[-1])
         exclude = os.path.join(self.repo, ".git", "info", "exclude")
