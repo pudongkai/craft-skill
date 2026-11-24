@@ -31,7 +31,7 @@ phased-dev-loop 的 Stop hook（`phased-dev-loop/scripts/stop_guard.py`）在还
 
 ### 3.2 业务规则
 
-- BR-1：“未结束的后台 Bash 命令”指：会话记录里有 Bash 工具返回的后台任务 id（`toolUseResult.backgroundTaskId`），且之后没有该 id 的结束记录。主动 `run_in_background` 起的命令和前台超时被转到后台的命令都算。
+- BR-1：“未结束的后台 Bash 命令”指：会话记录里有 Bash 工具返回的后台任务 id（`toolUseResult.backgroundTaskId`），且会话记录里（不论在启动记录之前还是之后）没有该 id 的结束记录。命令跑得快时，完成通知可能比启动记录先写进会话记录，这种情况也算已结束。主动 `run_in_background` 起的命令、前台超时被转到后台的命令、用户手动转到后台的命令都算。
 - BR-2：结束记录包括：
   - 带该任务 id 的完成通知（`<task-notification>` 中 `<task-id>` 为该 id，`<status>` 为 completed / failed / killed / stopped 之一），出现在 `queue-operation` 或 `attachment` 记录里都算；
   - 用 TaskStop 停掉该任务的成功结果（`toolUseResult.task_id` 为该 id）。TaskStop 停掉的命令不会再收到完成通知，所以必须单独认。
@@ -49,6 +49,7 @@ phased-dev-loop 的 Stop hook（`phased-dev-loop/scripts/stop_guard.py`）在还
 | --- | --- | --- | --- | --- |
 | AC-1 | 需拦截的状态；会话记录里有一行 tool_result，`toolUseResult` 含 `"backgroundTaskId":"b6r5u7d58"`，之后没有该 id 的结束记录 | 分别以 Stop 事件调用 stop_guard.py、flow_guard.py、worker_guard.py | 三个 hook 都放行（输出为空） | US-1、US-2、US-3、BR-1、BR-4、BR-6 |
 | AC-2 | 同 AC-1，但启动记录是前台超时转后台（`toolUseResult` 含 `backgroundTaskId` 和 `timedOutAfterMs`） | 同 AC-1 | 三个 hook 都放行 | BR-1 |
+| AC-2a | 需拦截的状态；会话记录里先有 `b6r5u7d58` 的完成通知（同 AC-3 的 queue-operation 行），后面才有带 `"backgroundTaskId":"b6r5u7d58"` 的启动记录 | 同 AC-1 | 三个 hook 都拦截 | BR-1、BR-2 |
 | AC-3 | AC-1 的会话记录后面再加一行 `type:"queue-operation"`，`content` 含 `<task-notification>` 及 `<task-id>b6r5u7d58</task-id>`、`<status>completed</status>`（标签间有换行） | 同 AC-1 | 三个 hook 都拦截，输出和没有后台任务时相同 | US-4、BR-2、BR-3、BR-5 |
 | AC-4 | 同 AC-3，但通知在 `type:"attachment"` 行的 `attachment.prompt` 里 | 同 AC-1 | 三个 hook 都拦截 | BR-2 |
 | AC-5 | 同 AC-3，`<status>` 分别为 failed、killed、stopped | 同 AC-1 | 每种状态下三个 hook 都拦截 | BR-2 |
