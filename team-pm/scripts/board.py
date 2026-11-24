@@ -183,8 +183,11 @@ def cmd_status(a):
 
 
 def cmd_events(a):
-    for e in bs.read_events(a.since):
+    events = board_dispatch.take_new_events() if a.new else bs.read_events(a.since)
+    for e in events:
         print_event(e)
+    if a.new and not events:
+        print("没有新事件")
 
 
 def build_parser():
@@ -194,7 +197,9 @@ def build_parser():
     add_item_parsers(sub.add_parser("item", help="任务单").add_subparsers(dest="action", required=True))
     sub.add_parser("ready", help="列出可以马上派出的任务单")
     sub.add_parser("status", help="所有项目的进展").add_argument("project", nargs="?")
-    sub.add_parser("events", help="打印事件").add_argument("--since", type=int, default=0)
+    x = sub.add_parser("events", help="打印事件")
+    x.add_argument("--since", type=int, default=0)
+    x.add_argument("--new", action="store_true", help="只打印上次读到之后的新事件，并记下读到哪了")
     sub.add_parser("notify", help="config 里 notify 为 dws 时，用 watch-task 的钉钉单聊发一条通知").add_argument("text")
     sub.add_parser("version", help="打印脚本版本号和看板根目录")
     return ap, sub

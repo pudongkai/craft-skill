@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
     "notify": "none",
     "effort": {"产品": "medium", "QA": "medium"},
     "autocompact": "auto",
+    "runner": "subagent",
 }
 
 

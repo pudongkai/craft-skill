@@ -46,6 +46,14 @@ class DispatchTest(unittest.TestCase):
             subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *cmd], cwd=self.repo, check=True)
         bs.create_project("demo", self.repo, "需求, 方案, 交付", "P1", "")
         bs.create_item("demo", "产品", "需求", "写需求", "")
+        self.set_runner("session")
+
+    def set_runner(self, runner):
+        path = os.path.join(os.environ["TEAM_BOARD"], "config.json")
+        cfg = json.load(open(path))
+        cfg["runner"] = runner
+        with open(path, "w") as f:
+            json.dump(cfg, f)
 
     def tearDown(self):
         os.environ["PATH"] = self.old_path
@@ -145,6 +153,26 @@ class DispatchTest(unittest.TestCase):
         bs.update_item("demo", "1", {"状态": "完成"})
         bd.reap()
         self.assertEqual(json.load(open(bd.reap_state_path())), [])
+
+    def test_subagent_dispatch_prints_prompt_and_marks_item(self):
+        self.set_runner("subagent")
+        agent_type, prompt = bd.dispatch("demo", "1")
+        self.assertEqual(agent_type, "team-product")
+        self.assertIn("item claim demo 0001 --resume", prompt)
+        self.assertNotIn("这张单以前已经有会话", prompt)
+        item = bs.load_item("demo", "1")
+        self.assertEqual((item.get("状态"), item.get("会话")), ("进行中", bd.SUBAGENT))
+        self.assertFalse(os.path.exists(os.path.join(self.fake, "calls.jsonl")))  # 不调用 claude
+        self.assertTrue(os.path.isdir(bs.load_project("demo").get("工作目录")))
+        self.assertEqual(bd.reap(), [])  # 子 agent 的单不按会话回收
+        _, prompt = bd.dispatch("demo", "1", retry=True)
+        self.assertIn("这张单以前已经有会话", prompt)
+        self.assertEqual(bs.load_item("demo", "1").get("重试"), "1")
+
+    def test_take_new_events_advances_cursor(self):
+        bs.append_event("demo", "0001", "完成", "x")
+        self.assertEqual(len(bd.take_new_events()), 1)
+        self.assertEqual(bd.take_new_events(), [])
 
     def test_hook_reported_stall_not_reported_again(self):
         bd.dispatch("demo", "1")

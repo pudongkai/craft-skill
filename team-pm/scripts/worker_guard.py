@@ -14,6 +14,7 @@ hook 自身出错时一律放行，不能因为脚本问题卡住会话。依赖
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -31,6 +32,7 @@ BOARD_CMD = "python3 ~/.claude/skills/team-pm/scripts/board.py"
 NEEDS_HUMAN_TYPES = {"permission_prompt", "agent_needs_input"}
 TYPE_KEYS = ("notification_type", "notificationType", "type", "kind")
 SUMMARY_LEN = 120
+CLAIM_RE = re.compile(r"item claim\s+([a-z0-9][a-z0-9-]*)\s+(\d+)")
 
 
 def run_stop_guard(raw):
@@ -146,11 +148,28 @@ def parse_payload(raw):
     return payload if isinstance(payload, dict) else {}
 
 
+def claimed_item(transcript):
+    """子 agent 会话记录里最后一次 `item claim <项目> <编号>` 领取的单，没有时返回 (None, None)。"""
+    text = read_text(transcript) or ""
+    hits = CLAIM_RE.findall(text)
+    return hits[-1] if hits else (None, None)
+
+
+def subagent_payload(raw):
+    """子 agent 的 SubagentStop 输入：换成子 agent 自己的会话记录和 id，返回 (输入, 项目, 编号)。"""
+    payload = parse_payload(raw)
+    transcript = payload.get("agent_transcript_path")
+    project, item = claimed_item(transcript)
+    payload.update({"transcript_path": transcript, "session_id": payload.get("agent_id") or payload.get("session_id")})
+    return json.dumps(payload, ensure_ascii=False), project, item
+
+
 def parse_args(argv):
-    p = argparse.ArgumentParser(description="角色会话的 Stop / Notification hook")
+    p = argparse.ArgumentParser(description="角色会话 / 角色子 agent 的 Stop / Notification hook")
     p.add_argument("--event", choices=["stop", "notification"], default="stop")
-    p.add_argument("--project", required=True)
-    p.add_argument("--item", required=True)
+    p.add_argument("--subagent", action="store_true", help="角色子 agent 的 Stop：从子 agent 会话记录里找领取的单")
+    p.add_argument("--project")
+    p.add_argument("--item")
     return p.parse_args(argv)
 
 
@@ -162,6 +181,10 @@ def main(argv=None):
         return
     raw = sys.stdin.read()
     try:
+        if args.subagent:
+            raw, args.project, args.item = subagent_payload(raw)
+        if not args.project or not args.item:
+            return
         if args.event == "notification":
             handle_notification(parse_payload(raw), args.project, args.item)
             return

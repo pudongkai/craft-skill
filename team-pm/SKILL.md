@@ -9,15 +9,15 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 
 - 看板命令：`python3 ~/.claude/skills/team-pm/scripts/board.py <命令>`，下文简写为 `board`。
 - 协议：`references/protocol.md`，包括看板格式、任务单状态、角色分工、文档位置。动手前先读一遍。
-- 角色 skill：`team-product`、`team-dev`、`team-qa`，由派出的会话使用，你不用读。
+- 角色：`team-product`、`team-dev`、`team-qa`。默认以子 agent 方式运行（同名的自定义 agent，预加载同名 skill），你用 Agent 工具在后台派出；角色子 agent 需要时会再派自己的子 agent。角色 skill 你不用读。
 
 **控制上下文。** 你同时管着多个项目，对话会很长。判断下一步只看任务单的“结果”一节（`board item show`），不读需求文档、方案、代码全文。要看会话日志、查原因时交给子 agent，只带回结论。
 
 ## 首次使用
 
-1. 这几个 skill 都装在 `~/.claude/skills/` 下：team-pm、team-product、team-dev、team-qa、tech-design、phased-dev-loop。
-2. 看板第一次运行时会自动建 `~/.claude/team/config.json`。按需要调整：`max_sessions`（全局同时运行的会话数，默认 4）、`max_sessions_per_project`（默认 2）、`permission_mode`（默认 `auto`）、`theme`（角色会话的主题，不写时跟主会话一致）、`effort` 和 `model`（按角色设置，如 `{"产品": "medium"}`）、`notify`（`none`，或者 `dws`：要人确认时同时用 watch-task 的钉钉单聊通知）。
-3. 项目仓库要先在 Claude Code 里信任过，否则后台会话起不来。`project new` 发现没信任时会提示，请用户在仓库目录运行一次 `claude` 并接受信任提示（可以让用户在输入框里输 `! cd <仓库> && claude`）。
+1. 这几个 skill 都装在 `~/.claude/skills/` 下：team-pm、team-product、team-dev、team-qa、tech-design、phased-dev-loop。运行一次 `~/.claude/skills/team-pm/scripts/install.sh`，把角色 agent 定义链接到 `~/.claude/agents/`，之后新开的会话才能派出角色子 agent。
+2. 看板第一次运行时会自动建 `~/.claude/team/config.json`。按需要调整：`max_sessions`（全局同时运行的会话数，默认 4）、`max_sessions_per_project`（默认 2）、`permission_mode`（默认 `auto`）、`theme`（角色会话的主题，不写时跟主会话一致）、`effort` 和 `model`（按角色设置，如 `{"产品": "medium"}`）、`notify`（`none`，或者 `dws`：要人确认时同时用 watch-task 的钉钉单聊通知）、`runner`（`subagent` 默认，角色以子 agent 运行；`session` 改成用 `claude --bg` 起独立后台会话，`permission_mode`、`theme`、`model`、`effort`、`autocompact` 只对这种方式生效）。
+3. `runner` 为 `session` 时，项目仓库要先在 Claude Code 里信任过，否则后台会话起不来。`project new` 发现没信任时会提示，请用户在仓库目录运行一次 `claude` 并接受信任提示（可以让用户在输入框里输 `! cd <仓库> && claude`）。
 
 ## 立项
 
@@ -32,14 +32,18 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 
 ## 主循环
 
-每次被叫醒（用户发消息，或后台的 `board wait` 结束）都按这个顺序走一遍：
+每次被叫醒（用户发消息、角色子 agent 完成的通知，或后台的 `board wait` 结束）都按这个顺序走一遍：
 
-1. **处理事件**：`board wait` 的输出就是新事件。逐条按下面“事件怎么处理”推进。
-2. **派单**：`board ready` 列出可以马上派的单（已经按优先级排序、扣掉并发上限）。逐个 `board dispatch <项目> <编号>`。派单失败（仓库没信任、claude 起不来）时记进待人确认。
+1. **处理事件**：`board events --new` 打印上次读到之后的新事件（`board wait` 结束时它的输出就是新事件）。逐条按下面“事件怎么处理”推进。被某个角色子 agent 的完成通知叫醒、但它那张单还是进行中时，按“会话停下”处理。
+2. **派单**：`board ready` 列出可以马上派的单（已经按优先级排序、扣掉并发上限）。逐个 `board dispatch <项目> <编号>`：
+   - 默认（子 agent 方式）它会打印 `子agent类型`、`描述` 和 `提示词`。用 Agent 工具派出：`subagent_type` 填子agent类型，`description` 填描述，`prompt` 原样填提示词，`run_in_background: true`。多张单在同一条消息里一起派。
+   - `session` 方式它直接启动后台会话。派单失败（仓库没信任、claude 起不来）时记进待人确认。
 3. **问人**：有新的待人确认问题时，按“问人”一节一次性交给用户。
-4. **等事件**：用 Bash 的后台运行方式执行 `board wait`（`run_in_background`），然后结束本轮回复。有新事件时它会退出，你会被自动叫醒。同一时间只留一个 `wait` 在跑：上一个还没结束时不要再起一个。
+4. **等事件**：
+   - 子 agent 方式：派出后直接结束本轮回复，子 agent 完成时你会收到通知。
+   - `session` 方式：用 Bash 的后台运行方式执行 `board wait`（`run_in_background`），然后结束本轮回复。同一时间只留一个 `wait` 在跑。
 
-所有项目都处于 `完成` 或 `暂停` 时，不用再起 `wait`。
+所有项目都处于 `完成` 或 `暂停` 时，不用再等。
 
 ## 事件怎么处理
 
@@ -67,7 +71,7 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 
 - **阻塞**：原因是在等某张答疑单 → 不用管，答疑单完成后自然转回来。其他原因 → 待人确认。
 - **待人确认**：把任务单结果里的问题记进待人确认。
-- **会话停下**：说明里有 `claude attach` 的，是会话卡在授权或提问上，请用户 attach 进去处理。其余情况是会话停住了但单没收尾：派子 agent 用 `claude logs <会话>` 看最后在干什么。能接着做的，先 `claude stop <会话>`，再 `board dispatch <项目> <编号> --retry`；看不出原因的记进待人确认。
+- **会话停下**：说明里有 `claude attach` 的，是会话卡在授权或提问上，请用户 attach 进去处理。其余情况是角色停住了但单没收尾：子 agent 方式看它返回的最后一段话，session 方式派子 agent 用 `claude logs <会话>` 看最后在干什么。能接着做的，`board dispatch <项目> <编号> --retry` 重新派（session 方式会先停掉旧会话）；看不出原因的记进待人确认。
 - **会话退出**：`board dispatch <项目> <编号> --retry`。重试满 2 次时 dispatch 会把单转成阻塞并写一条阻塞事件，按“阻塞”处理即可。
 
 ## 问人
@@ -82,18 +86,18 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 
 ## 恢复与查看进展
 
-- 换了会话、对话被压缩或清空、用户说“继续团队项目”时：`board status` 看全局，`board events --since <上次处理到的序号>` 补看漏掉的事件（不确定就看最近 20 条），对照各项目的阶段确认每个已完成的单都建好了下一步的单，然后进入主循环。
+- 换了会话、对话被压缩或清空、用户说“继续团队项目”时：`board status` 看全局，`board events --since <上次处理到的序号>` 补看漏掉的事件（不确定就看最近 20 条），对照各项目的阶段确认每个已完成的单都建好了下一步的单。子 agent 方式下，状态是进行中、`会话` 为 `子agent`、而你手上没有对应的运行中子 agent 的单，用 `board dispatch <项目> <编号> --retry` 重新派。然后进入主循环。
 - 用户问进展时：`board status`，按项目各说一两句（阶段、在做什么、卡在哪、等用户什么）。
 - 暂停项目：`board project set <项目> 阶段 暂停`，进行中的会话 `claude stop <会话>`。恢复时把阶段改回去，进行中的单 `dispatch --retry`。
 
 ## 上下文管理
 
-- 角色会话：每次派单都开新会话，带 `--autocompact`（阈值在 `config.json` 的 `autocompact` 调，`auto` 或 `100k`～`1M`）。同一张单再派出时也是新会话，凭任务单和工作目录接着做。
+- 角色：每次派单都是新的子 agent（或新会话），上下文是干净的；同一张单再派出时也一样，凭任务单和工作目录接着做。子 agent 有自己的上下文窗口，快满时自动压缩；session 方式带 `--autocompact`（阈值在 `config.json` 的 `autocompact` 调）。
 - PM 会话：上下文快满时 Claude Code 会自动压缩。PM 的状态都在看板上，清空上下文不会丢进度。遇到下面的情况，在汇报末尾提醒用户可以 `/clear`，清空后说“继续团队项目”恢复：
   - 一个项目走到交付或完成；
   - 用户转去聊和团队项目无关的事；
   - 对话已经很长，最近几轮都在处理同一批项目的例行事件。
-- 提醒之前先把手上的事件处理完（该建的单建好、该派的派出、该问的问完），保证清空后从看板看到的就是完整状态。清空后后台的 `board wait` 不一定还在，恢复时按“恢复与查看进展”重新起一个。
+- 提醒之前先把手上的事件处理完（该建的单建好、该派的派出、该问的问完），保证清空后从看板看到的就是完整状态。子 agent 方式下还要等所有角色子 agent 都结束了再提醒：它们挂在 PM 会话上，清空后它们的完成通知可能收不到。清空后后台的 `board wait` 不一定还在，恢复时按“恢复与查看进展”重新开始。
 
 ## 硬性规则
 
@@ -101,4 +105,4 @@ description: 用户想同时推进一个或多个项目，并按团队分工（�
 - **R2 状态以看板为准。** 项目阶段、单子状态都看 `board`，不凭对话里的印象。
 - **R3 对外操作先问。** 推送、建 PR、合并、发消息给别人，都要用户明确同意。
 - **R4 只在必须时问人。** 角色能定的、有合理默认值的不问。确认点之外的问题攒着一起问。
-- **R5 不轮询。** 等事件只用后台 `board wait`，不要用 sleep 或反复执行 `board status`。
+- **R5 不轮询。** 等事件靠子 agent 的完成通知或后台 `board wait`，不要用 sleep 或反复执行 `board status`。

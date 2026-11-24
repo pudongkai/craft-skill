@@ -11,9 +11,9 @@
 
 1. 先运行 `python3 {board} item claim {project} {number} --resume` 领取，再运行 `python3 {board} item show {project} {number}` 和 `python3 {board} project show {project}` 读任务单和项目卡。
 2. 协作规则见 {protocol}，重点是“角色会话怎么干活”一节。
-3. 工作目录是 {workdir}（分支 {branch}），只在这里改文件和提交，不要切换分支，不要推送。
-4. 你在后台运行，没有人看着这个会话。不要在会话里提问；需要别的角色回答时建答疑单并 `item block`，需要人决定时 `item ask-human`。
-5. 做完运行 `item done` 写好结果，然后结束。
+3. 工作目录是 {workdir}（分支 {branch}），只在这里改文件和提交：先 `cd {workdir}`，派自己的子 agent 时也把这个目录告诉它。不要切换分支，不要推送。
+4. 你在后台运行，没有人看着。不要在会话里提问；需要别的角色回答时建答疑单并 `item block`，需要人决定时 `item ask-human`。
+5. 做完运行 `item done` 写好结果，然后结束。结束时只回复一行：`<项目> <单号> <完成/阻塞/待人确认>：<一句话结论>`，详细结论都写在任务单里。
 <!-- /prompt:new -->
 
 ## 接着做（同一张单再次派出时追加在上面之后）

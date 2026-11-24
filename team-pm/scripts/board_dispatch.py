@@ -1,7 +1,10 @@
 """派单、等待事件、回收会话：board.py 的 dispatch / wait / reap 子命令。
 
-角色会话用 `claude --bg` 在项目 worktree 里启动，一张任务单一个会话。
-会话的 Stop / Notification hook 通过 `--settings` 只注册给这个会话，命令里带上项目名和单号。
+角色有两种运行方式，由 config.json 的 runner 决定：
+- subagent（默认）：dispatch 只把单改成进行中并打印子 agent 类型和提示词，由 PM 用 Agent 工具在后台派出。
+  角色子 agent 的 Stop hook 写在 agents/ 下的 agent 定义里。
+- session：用 `claude --bg` 在项目 worktree 里启动独立会话，Stop / Notification hook 通过 `--settings` 只注册给这个会话。
+一张任务单一次派出就是一个新的子 agent 或会话。
 """
 import json
 import os
@@ -16,6 +19,7 @@ SKILL_DIR = os.path.dirname(SCRIPTS_DIR)
 PROMPT_FILE = os.path.join(SKILL_DIR, "references", "dispatch-prompt.md")
 PROTOCOL_FILE = os.path.join(SKILL_DIR, "references", "protocol.md")
 ROLE_SKILLS = {"产品": "team-product", "开发": "team-dev", "QA": "team-qa"}
+SUBAGENT = "子agent"  # 子 agent 方式派出的单，“会话”字段写这个
 MAX_RETRIES = 2
 BG_ID_RE = re.compile(r"backgrounded\s*·\s*([0-9a-f]+)")
 FINISHED_STATUSES = {"完成", "阻塞", "待人确认", "取消"}
@@ -219,20 +223,48 @@ def stop_previous_session(item):
     sid = item.get("会话")
     if not sid:
         return False
+    if sid == SUBAGENT:
+        return True
     if session_alive(list_sessions().get(sid)):
         stop_session(sid)
     return True
 
 
 def dispatch(project, number, retry=False):
-    project_doc = bs.load_project(project)
-    item = bs.load_item(project, number)
-    is_retry = check_dispatchable(project, item, retry)
-    workdir = ensure_worktree(project)
+    """按 runner 派单。session 方式返回 (会话短 id, 是否接着做)；subagent 方式返回 (子 agent 类型, 提示词)。"""
+    if bs.load_config().get("runner", "subagent") == "subagent":
+        return prepare_subagent(project, number, retry)
+    return launch_session(project, number, retry)
+
+
+def build_prompt(project_doc, item):
+    """返回 (提示词, 是否接着做)：这张单以前派过时追加“接着做”一段。"""
     continued = stop_previous_session(item)
     prompt = render_prompt("new", project_doc, item)
     if continued:
         prompt += "\n\n" + load_prompt("continue")
+    return prompt, continued
+
+
+def prepare_subagent(project, number, retry):
+    project_doc = bs.load_project(project)
+    item = bs.load_item(project, number)
+    is_retry = check_dispatchable(project, item, retry)
+    ensure_worktree(project)
+    prompt, _ = build_prompt(project_doc, item)
+    fields = {"状态": "进行中", "会话": SUBAGENT, "派出时间": bs.now()}
+    if is_retry:
+        fields["重试"] = str(int(item.get("重试") or 0) + 1)
+    bs.update_item(project, number, fields)
+    return ROLE_SKILLS[item.get("角色")], prompt
+
+
+def launch_session(project, number, retry):
+    project_doc = bs.load_project(project)
+    item = bs.load_item(project, number)
+    is_retry = check_dispatchable(project, item, retry)
+    workdir = ensure_worktree(project)
+    prompt, continued = build_prompt(project_doc, item)
     code, out = run(launch_command(project_doc, item, prompt), cwd=workdir, timeout=120)
     m = BG_ID_RE.search(out)
     if code != 0 or not m:
@@ -297,8 +329,8 @@ def mark_reported(name, item):
 
 def reap_item(name, item, row, reported, keep):
     sid, status, no = item.get("会话"), item.get("状态"), bs.item_number(item)
-    if not sid:
-        return None
+    if not sid or sid == SUBAGENT:
+        return None  # 子 agent 由 PM 会话自己跟踪，完成时 PM 会收到通知
     if status in FINISHED_STATUSES and session_alive(row):
         stop_session(sid)
         return f"{name} {no} 已{status}，停掉会话 {sid}"
@@ -338,19 +370,30 @@ def wait(since=None, timeout=3600, reap_interval=60, poll=3):
             except (bs.BoardError, OSError, ValueError):
                 pass  # 回收失败不影响等事件，下次再试
             next_reap = time.time() + reap_interval
-        events = bs.read_events(since)
+        events = take_new_events(since)
         if events:
-            with open(cursor_path(), "w", encoding="utf-8") as f:
-                f.write(str(events[-1]["序号"]))
             return events
         time.sleep(poll)
     return []
 
 
+def take_new_events(since=None):
+    """返回游标之后的新事件，并把游标移到最后一条。"""
+    events = bs.read_events(read_cursor() if since is None else since)
+    if events:
+        with open(cursor_path(), "w", encoding="utf-8") as f:
+            f.write(str(events[-1]["序号"]))
+    return events
+
+
 # ---------- 命令行 ----------
 
 def cmd_dispatch(a):
-    sid, continued = dispatch(a.project, a.number, a.retry)
+    if bs.load_config().get("runner", "subagent") == "subagent":
+        agent_type, prompt = prepare_subagent(a.project, a.number, a.retry)
+        print(f"子agent类型: {agent_type}\n描述: {a.project} {bs.format_no(a.number)} {agent_type}\n提示词:\n{prompt}")
+        return
+    sid, continued = launch_session(a.project, a.number, a.retry)
     how = "新会话，接着之前的进度" if continued else "新会话"
     print(f"已派出 {a.project} {bs.format_no(a.number)}（{how}）：会话 {sid}；需要时 claude attach {sid}")
 
@@ -370,7 +413,7 @@ def cmd_wait(a):
 
 
 def register(sub, commands):
-    x = sub.add_parser("dispatch", help="启动角色会话处理一张任务单")
+    x = sub.add_parser("dispatch", help="派出一张任务单：subagent 方式打印子 agent 类型和提示词，session 方式启动后台会话")
     x.add_argument("project")
     x.add_argument("number")
     x.add_argument("--retry", action="store_true", help="单还在进行中但会话已退出时重派")

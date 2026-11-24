@@ -340,3 +340,4 @@ hook 不写在角色 skill 的 SKILL.md 里（`hooks:` 声明的路径会被客�
 - 整体审查（子 agent）确认的问题已修复：回归没修好时 PM 会一直等（QA 第 1 次没修好也建新修复单，PM 按测试结果转人）；一次停机同时报“会话停下”和“会话退出”（hook 写事件时同时标记已报告）；QA 没有答疑单做法；人介入后重试次数不清零；测试单不等测试计划；并行提交带上别人暂存的文件（统一 `git commit -- <路径>`）；单号不是数字时报错堆栈；结果里的 `##` 行截断正文。
 - 未改：拦截计数文件没加锁（只会让放行晚一点）；各角色 SKILL.md 的“注意”一节与协议有少量重复。
 - 全量测试：team-pm 113 个、phased-dev-loop、dev-flow 的测试全部通过（team-pm 用例数包含试跑合并进来的 version 子命令和 Stop hook 识别后台 Bash 的测试）。
+- 后续调整：角色默认改为以子 agent 方式运行（`team-pm/agents/` 下三个 agent 定义，预加载角色 skill，Stop hook 写在定义里，转成 SubagentStop，按子 agent 自己的会话记录找领取的单），`claude --bg` 后台会话保留为 `runner: session`。实测：子 agent 可以再派子 agent（默认最多 3 层）；子 agent 没收尾就结束时会被 hook 拦下；重派时开新子 agent 并带“接着做”提示词。每次派单都开新子 agent 或新会话，PM 在项目交付、话题切换时提醒用户 `/clear`。

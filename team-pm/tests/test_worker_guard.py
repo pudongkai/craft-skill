@@ -199,6 +199,36 @@ class BackgroundTaskTest(BackgroundTaskCases, WorkerGuardTestCase):
         self.assertEqual(self.run_rows(rows, transcript=transcript), self.baseline)
 
 
+class SubagentStopTest(WorkerGuardTestCase):
+    def sub_payload(self, rows):
+        agent_tp = os.path.join(self.tmp.name, "agent.jsonl")
+        with open(agent_tp, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return {"session_id": "main", "transcript_path": self.transcript, "cwd": self.cwd,
+                "agent_id": "ag1", "agent_type": "team-dev", "hook_event_name": "SubagentStop",
+                "agent_transcript_path": agent_tp}
+
+    def test_blocks_claimed_item_in_progress(self):
+        bs.claim_item("demo", 1)
+        claim = {"type": "assistant", "message": {"content": "python3 board.py item claim demo 0001 --resume"}}
+        out = json.loads(self.run_hook(self.sub_payload([claim]), "--subagent", project="x", item="0"))
+        self.assertIn("demo 0001", out["reason"])
+        self.set_status("完成")
+        self.assertEqual(self.run_hook(self.sub_payload([claim]), "--subagent", project="x", item="0"), "")
+
+    def test_no_claim_allows(self):
+        bs.claim_item("demo", 1)
+        self.write_transcript([{"type": "user", "message": {"content": "item claim demo 0001"}}])
+        self.assertEqual(self.run_hook(self.sub_payload([]), "--subagent", project="x", item="0"), "")
+
+    def test_subagent_pending_children_allow(self):
+        bs.claim_item("demo", 1)
+        rows = [{"type": "assistant", "message": {"content": "item claim demo 1"}},
+                {"type": "user", "toolUseResult": {"status": "async_launched", "agentId": "abc"}}]
+        self.assertEqual(self.run_hook(self.sub_payload(rows), "--subagent", project="x", item="0"), "")
+
+
 class NotificationTest(WorkerGuardTestCase):
     def notify(self, **fields):
         return self.run_hook(self.payload(**fields), "--event", "notification")
