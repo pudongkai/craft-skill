@@ -12,6 +12,9 @@ sys.path.insert(0, SCRIPTS)
 import board_store as bs  # noqa: E402
 import worker_guard as wg  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(SCRIPTS)), "phased-dev-loop", "tests"))
+from background_cases import BackgroundTaskCases  # noqa: E402
+
 GUARD = os.path.join(SCRIPTS, "worker_guard.py")
 
 
@@ -166,6 +169,34 @@ class StopTest(WorkerGuardTestCase):
             wg.main(["--project", "demo", "--item", "1"])
         self.assertEqual(out.getvalue(), "")
         self.assertIn("坏了", err.getvalue())
+
+
+class BackgroundTaskTest(BackgroundTaskCases, WorkerGuardTestCase):
+    """任务单进行中、没有 RUNNING 方案时，后台任务影响 worker_guard 自己的拦截。"""
+
+    def setUp(self):
+        super().setUp()
+        bs.claim_item("demo", 1)
+        self.session = 0
+        self.baseline = self.run_rows([])
+        self.assertEqual(json.loads(self.baseline)["decision"], "block")
+
+    def run_rows(self, rows, transcript=None, raw_lines=()):
+        """每次用新的 session_id，避免连续拦截计数影响结果。"""
+        with open(self.transcript, "w", encoding="utf-8") as f:
+            for line in raw_lines:
+                f.write(line + "\n")
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self.session += 1
+        return self.run_hook(self.payload(session_id=f"s{self.session}", transcript_path=transcript or self.transcript))
+
+    def assertAllows(self, rows, raw_lines=()):
+        self.assertEqual(self.run_rows(rows, raw_lines=raw_lines), "")
+        self.assertEqual(self.events(), [])
+
+    def assertBlocks(self, rows, transcript=None):
+        self.assertEqual(self.run_rows(rows, transcript=transcript), self.baseline)
 
 
 class NotificationTest(WorkerGuardTestCase):

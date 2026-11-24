@@ -6,7 +6,7 @@ Stop：任务单还在进行中时阻止会话结束，提示用 item done / blo
 - 任务单不存在，或已不是进行中（已收尾的会话不再交给 phased-dev-loop 判断）。
 - 开发、修复单的技术方案还在 RUNNING：调用 phased-dev-loop 的 stop_guard.py，它有输出就由它负责；
   它因连续拦截而放行时，补写“会话停下”事件叫醒 PM。
-- 本会话还有没交回结果的后台子 agent：交回后会自动接着干。
+- 本会话还有未结束的后台任务（子 agent 或 Bash 后台命令）：结束后会自动接着干。
 - 连续多次拦截而任务单没有任何变化：放行并写“会话停下”事件叫醒 PM，避免无限循环。
 Notification：会话要授权或要回答提问时写“会话停下”事件，PM 让人 claude attach 进去处理。
 hook 自身出错时一律放行，不能因为脚本问题卡住会话。依赖 phased-dev-loop 装在同一个 skills 目录下。

@@ -4,7 +4,7 @@
 .claude/dev-loop/ACTIVE 每行一个正在开发的技术方案路径，同一项目里可以有多个会话各自开发一份。
 本会话开发的是列表里会话记录中最后提到的那份方案；一份都没提到过，说明本会话没在开发，放行。
 只在该方案开发状态为 RUNNING 时拦截。以下情况也放行：
-- 本会话还有没交回结果的后台子 agent：主对话只能结束本轮来等结果，交回后会自动接着干。
+- 本会话还有未结束的后台任务（子 agent 或 Bash 后台命令）：主对话只能结束本轮来等结果，结束后会自动接着干。
 - 本会话连续多次拦截而文档没有任何变化：避免 Claude 卡住后无限循环。
 """
 import hashlib
@@ -20,7 +20,12 @@ PHASE_RE = re.compile(r"^(?:[-*]|\d+\.)\s+\[([ ~xX!])\]\s+(.+)$")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 PLAN_SECTION_RE = re.compile(r"开发计划|实施计划|开发阶段|阶段划分|实施步骤")
 STATUS_RE = re.compile(r"^\**开发状态\**\s*[:：]\s*\**\s*(\w+)", re.MULTILINE)
-TASK_DONE_RE = re.compile(r"<task-id>([0-9a-f]+)</task-id>.*?<status>(?:completed|failed|killed|stopped)</status>")
+# 中间不跨过下一个 <task-id>，一行里有多条通知时 id 只和自己那条的状态配对
+TASK_DONE_RE = re.compile(
+    r"<task-id>([^<\s]+)</task-id>(?:(?!<task-id>).)*?<status>(?:completed|failed|killed|stopped)</status>"
+)
+# 行里没有这些关键字时不可能是后台任务的启动或结束记录，跳过 JSON 解析
+TASK_LINE_MARKERS = ("gentId", "backgroundTaskId", '"task_id"', "<task-id>")
 MAX_GUARD_SESSIONS = 20
 
 
@@ -50,7 +55,7 @@ def read_text(path):
 
 
 def session_target(transcript, candidates):
-    """返回 (本会话未交回结果的后台子 agent 数, 本会话对应的候选路径或 None)。
+    """返回 (本会话未结束的后台任务数, 本会话对应的候选路径或 None)。
 
     对应的是会话记录里最后提到的候选；读不到会话记录时，只有一个候选就用它。
     """
@@ -83,22 +88,44 @@ def parse_phases(text):
     return phases
 
 
+def _nonempty_str(value):
+    return value if isinstance(value, str) and value else None
+
+
 def _launched_agent(row):
     """这一行是派出（或恢复）后台子 agent 的工具结果时返回 agent id。"""
     r = row.get("toolUseResult")
     if not isinstance(r, dict):
         return None
     if r.get("status") == "async_launched":
-        return r.get("agentId")
-    return r.get("resumedAgentId")
+        return _nonempty_str(r.get("agentId"))
+    return _nonempty_str(r.get("resumedAgentId"))
 
 
-def _finished_agents(row):
-    """Claude Code 排进队列的完成通知里已结束的 agent id。"""
+def _launched_bash(row):
+    """这一行是后台 Bash 命令（主动后台、超时或手动转后台）的工具结果时返回任务 id。"""
+    r = row.get("toolUseResult")
+    return _nonempty_str(r.get("backgroundTaskId")) if isinstance(r, dict) else None
+
+
+def _stopped_task(row):
+    """这一行是 TaskStop 成功停掉任务的结果时返回任务 id。"""
+    r = row.get("toolUseResult")
+    if not isinstance(r, dict):
+        return None
+    message = r.get("message")
+    if isinstance(message, str) and message.startswith("Successfully stopped task"):
+        return _nonempty_str(r.get("task_id"))
+    return None
+
+
+def _finished_tasks(row):
+    """Claude Code 排进队列的完成通知里已结束的任务 id（子 agent 和 Bash 命令）。"""
     if row.get("type") == "queue-operation":
         text = row.get("content")
     elif row.get("type") == "attachment":
-        text = (row.get("attachment") or {}).get("prompt")
+        attachment = row.get("attachment")
+        text = attachment.get("prompt") if isinstance(attachment, dict) else None
     else:
         return []
     return TASK_DONE_RE.findall(" ".join(text.split())) if isinstance(text, str) else []
@@ -113,25 +140,38 @@ def _last_mentioned(line, needles):
 
 
 def scan_transcript(transcript, needles):
-    """返回 (未交回结果的后台子 agent 数, 会话记录里最后提到的 needle)。读不到记录时第二项为 _UNREADABLE。"""
-    pending, last = set(), None
+    """返回 (未结束的后台任务数, 会话记录里最后提到的 needle)。读不到记录时第二项为 _UNREADABLE。
+
+    后台任务包括子 agent 和 Bash 后台命令。子 agent 会被恢复，按记录先后加入、移除；
+    Bash 命令的完成通知可能写在启动记录前面，按“启动过的 id − 结束过的 id”整份记录计数。
+    """
+    agents, bash_started, ended, last = set(), set(), set(), None
     try:
         with open(transcript, encoding="utf-8") as f:
             for line in f:
                 last = _last_mentioned(line, needles) or last
-                if "gentId" not in line and "<task-id>" not in line:
+                if not any(m in line for m in TASK_LINE_MARKERS):
                     continue
                 try:
                     row = json.loads(line)
                 except ValueError:
                     continue
-                aid = _launched_agent(row)
+                if not isinstance(row, dict):
+                    continue
+                aid, bid = _launched_agent(row), _launched_bash(row)
                 if aid:
-                    pending.add(aid)
-                pending.difference_update(_finished_agents(row))
+                    agents.add(aid)
+                if bid:
+                    bash_started.add(bid)
+                finished = set(_finished_tasks(row))
+                stopped = _stopped_task(row)
+                if stopped:
+                    finished.add(stopped)
+                ended |= finished
+                agents -= finished
     except (OSError, TypeError):
         return 0, _UNREADABLE
-    return len(pending), last
+    return len(agents) + len(bash_started - ended), last
 
 
 def stalled_count(root, state_dir, session_id, text):
