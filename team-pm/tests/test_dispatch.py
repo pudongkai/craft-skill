@@ -105,25 +105,26 @@ class DispatchTest(unittest.TestCase):
         self.assertEqual(bs.load_item("demo", "1").get("状态"), "阻塞")
         self.assertEqual(bs.read_events()[-1]["事件"], "阻塞")
 
-    def test_reply_then_resume_previous_session(self):
+    def test_redispatch_uses_new_session_with_continue_prompt(self):
         bd.dispatch("demo", "1")
+        self.assertNotIn("这张单以前已经有会话", self.calls()[-1]["argv"][-1])
         bs.update_item("demo", "1", {"状态": "待人确认"})
         bs.reply_item("demo", "1", "人选了方案 A")
         self.set_agents([{"id": "abc123", "sessionId": "full-abc", "state": "done"}])
-        self.set_next_id("abc123")
-        _, resumed = bd.dispatch("demo", "1")
-        self.assertTrue(resumed)
+        _, continued = bd.dispatch("demo", "1")
+        self.assertTrue(continued)
         argv = self.calls()[-1]["argv"]
-        self.assertEqual(argv[argv.index("--resume") + 1], "full-abc")
-        self.assertIn("需要你接着做", argv[-1])
+        self.assertNotIn("--resume", argv)
+        self.assertEqual(argv[argv.index("--autocompact") + 1], "auto")
+        self.assertIn("这张单以前已经有会话", argv[-1])
+        self.assertIn("item claim demo 0001", argv[-1])
 
-    def test_alive_old_session_stopped_before_resume(self):
+    def test_alive_old_session_stopped_before_redispatch(self):
         bd.dispatch("demo", "1")
         self.set_agents([{"id": "abc123", "sessionId": "full-abc", "pid": os.getpid(), "state": "done"}])
         bd.dispatch("demo", "1", retry=True)
         self.assertEqual(self.calls("stop")[-1]["argv"], ["stop", "abc123"])
-        argv = self.calls()[-1]["argv"]
-        self.assertEqual(argv[argv.index("--resume") + 1], "full-abc")
+        self.assertNotIn("--resume", self.calls()[-1]["argv"])
 
     def test_missing_claude_is_board_error(self):
         os.environ["PATH"] = "/nonexistent"

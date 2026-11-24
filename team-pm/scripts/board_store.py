@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
     "permission_mode": "auto",
     "notify": "none",
     "effort": {"产品": "medium", "QA": "medium"},
+    "autocompact": "auto",
 }
 
 

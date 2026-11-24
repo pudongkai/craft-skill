@@ -196,7 +196,7 @@ def check_dispatchable(project, item, retry):
     raise bs.BoardError(f"{bs.item_number(item)} 状态是 {status}，不能派{hint}")
 
 
-def launch_command(project_doc, item, prompt, resume_session):
+def launch_command(project_doc, item, prompt):
     cfg = bs.load_config()
     role = item.get("角色")
     cmd = ["claude", "--bg", "-n", f"team-{project_doc.get('项目')}-{bs.item_number(item)}",
@@ -208,23 +208,20 @@ def launch_command(project_doc, item, prompt, resume_session):
         cmd += ["--effort", effort]
     if model:
         cmd += ["--model", model]
-    if resume_session:
-        cmd += ["--resume", resume_session]
+    if cfg.get("autocompact"):
+        cmd += ["--autocompact", str(cfg["autocompact"])]
     return cmd + [prompt]
 
 
-def previous_session(item):
-    """任务单上次用的会话还在 claude agents 记录里时，返回它的完整会话 id，用来接着做。
-    旧会话进程还开着时先停掉，避免两个进程接着同一个会话。"""
+def stop_previous_session(item):
+    """这张单以前派过时停掉旧会话（还开着的话），返回是否派过。
+    每次派单都开新会话，上下文干净，接着做靠任务单和工作目录。"""
     sid = item.get("会话")
     if not sid:
-        return None
-    row = list_sessions().get(sid)
-    if not row:
-        return None
-    if session_alive(row):
+        return False
+    if session_alive(list_sessions().get(sid)):
         stop_session(sid)
-    return row.get("sessionId")
+    return True
 
 
 def dispatch(project, number, retry=False):
@@ -232,9 +229,11 @@ def dispatch(project, number, retry=False):
     item = bs.load_item(project, number)
     is_retry = check_dispatchable(project, item, retry)
     workdir = ensure_worktree(project)
-    resume_session = previous_session(item)
-    prompt = render_prompt("resume" if resume_session else "new", project_doc, item)
-    code, out = run(launch_command(project_doc, item, prompt, resume_session), cwd=workdir, timeout=120)
+    continued = stop_previous_session(item)
+    prompt = render_prompt("new", project_doc, item)
+    if continued:
+        prompt += "\n\n" + load_prompt("continue")
+    code, out = run(launch_command(project_doc, item, prompt), cwd=workdir, timeout=120)
     m = BG_ID_RE.search(out)
     if code != 0 or not m:
         if "not trusted" in out:
@@ -244,7 +243,7 @@ def dispatch(project, number, retry=False):
     if is_retry:
         fields["重试"] = str(int(item.get("重试") or 0) + 1)
     bs.update_item(project, number, fields)
-    return m.group(1), bool(resume_session)
+    return m.group(1), continued
 
 
 # ---------- reap / wait ----------
@@ -351,8 +350,8 @@ def wait(since=None, timeout=3600, reap_interval=60, poll=3):
 # ---------- 命令行 ----------
 
 def cmd_dispatch(a):
-    sid, resumed = dispatch(a.project, a.number, a.retry)
-    how = "接着原会话" if resumed else "新会话"
+    sid, continued = dispatch(a.project, a.number, a.retry)
+    how = "新会话，接着之前的进度" if continued else "新会话"
     print(f"已派出 {a.project} {bs.format_no(a.number)}（{how}）：会话 {sid}；需要时 claude attach {sid}")
 
 
