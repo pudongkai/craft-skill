@@ -263,6 +263,14 @@ def resolve_human_questions(name, which):
     return len(picked)
 
 
+def add_pm_decision(name, text):
+    """PM 代为决定的非阻塞问题记进项目卡“PM 决定”一节，用户事后可以查看和推翻。"""
+    with board_lock():
+        doc = load_project(name)
+        doc.append_to_section("PM 决定", f"- {today()} {text}")
+        doc.save()
+
+
 def add_human_question(name, text):
     with board_lock():
         doc = load_project(name)

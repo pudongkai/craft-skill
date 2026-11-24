@@ -174,6 +174,12 @@ class FilterAndResolveTest(BoardTestCase):
             bs.resolve_human_questions("demo", "5")
         self.assertEqual(bs.resolve_human_questions("demo", "all"), 1)
 
+    def test_pm_decision(self):
+        self.new_project()
+        code, _ = self.run_cli("project", "decide", "demo", "0003 分页大小 → 20（沿用已有接口）")
+        self.assertEqual(code, 0)
+        self.assertIn("0003 分页大小 → 20", bs.load_project("demo").section("PM 决定"))
+
     def test_notify_disabled_by_default(self):
         _, out = self.run_cli("notify", "hi")
         self.assertIn("没开启", out)

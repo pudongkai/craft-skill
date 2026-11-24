@@ -115,6 +115,9 @@ def cmd_project(a):
     elif a.action == "ask":
         bs.add_human_question(a.name, a.text)
         print(f"已记入 {a.name} 待人确认")
+    elif a.action == "decide":
+        bs.add_pm_decision(a.name, a.text)
+        print(f"已记入 {a.name} PM 决定")
     elif a.action == "resolve":
         print(f"已勾掉 {bs.resolve_human_questions(a.name, a.which)} 条")
     elif a.action == "show":
@@ -223,6 +226,9 @@ def add_project_parsers(p):
     x = p.add_parser("ask")
     x.add_argument("name")
     x.add_argument("text")
+    x = p.add_parser("decide", help="记下 PM 代为决定的非阻塞问题")
+    x.add_argument("name")
+    x.add_argument("text", help="<单号> <问题> → <决定>（依据）")
     x = p.add_parser("resolve", help="勾掉待人确认里第几条未处理的问题")
     x.add_argument("name")
     x.add_argument("which", help="序号（从 1 数，只数未处理的）或 all")
