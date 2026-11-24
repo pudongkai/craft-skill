@@ -1,6 +1,6 @@
 # Stop hook 识别后台 Bash 命令技术方案
 
-开发状态: TODO
+开发状态: DONE
 方案评审: 通过（2026-11-24）
 需求来源: docs/prd/stop-guard-bg.md
 作者: 开发（团队角色）　　日期: 2026-11-24
@@ -136,18 +136,20 @@
 
 ## 8. 开发计划
 
-- [ ] 阶段1：stop_guard 识别后台 Bash 命令
+- [x] 阶段1：stop_guard 识别后台 Bash 命令
   - 涉及模块：phased-dev-loop/scripts、phased-dev-loop/tests
   - 依赖：无
   - 验证方式：独立
   - 内容：按 4.4 第 1～5 步改 `stop_guard.py`（`_launched_bash`、`_finished_tasks`、`_stopped_task`、`TASK_DONE_RE`、`TASK_LINE_MARKERS`、`scan_transcript` 计数），更新文件开头说明和文档字符串；新增 `phased-dev-loop/tests/test_stop_guard.py`，覆盖第 7 节列出的 stop_guard 用例
   - 完成标准：`python3 -m unittest discover -s phased-dev-loop/tests` 通过；`python3 -m unittest discover -s team-pm/tests` 仍全部通过
+  - 验证：`python3 -m unittest discover -s phased-dev-loop/tests` 18 个通过，`-s team-pm/tests` 通过；换回改动前的 stop_guard.py 时新用例失败；独立验证通过，按其建议把 agentId 和 attachment 字段类型异常也按坏行跳过（BR-7）；AC-1～AC-10 的共用用例放在 `phased-dev-loop/tests/background_cases.py`，三个 hook 的测试共用；改动 `phased-dev-loop/scripts/stop_guard.py`、`phased-dev-loop/tests/test_stop_guard.py`、`phased-dev-loop/tests/background_cases.py`
 
-- [ ] 阶段2：flow_guard、worker_guard 测试与文档同步
+- [x] 阶段2：flow_guard、worker_guard 测试与文档同步
   - 涉及模块：dev-flow/tests、dev-flow/scripts、dev-flow/SKILL.md、team-pm/tests、team-pm/scripts/worker_guard.py、phased-dev-loop/SKILL.md、phased-dev-loop/references
   - 依赖：阶段1
   - 内容：新增 `dev-flow/tests/test_flow_guard.py`，在 `team-pm/tests/test_worker_guard.py` 补后台 Bash 用例（见第 7 节）；更新 flow_guard.py、worker_guard.py 开头说明，phased-dev-loop/SKILL.md、dev-flow/SKILL.md 放行条件表格，failure-modes.md 的 F3
   - 完成标准：`python3 -m unittest discover -s dev-flow/tests` 和 `python3 -m unittest discover -s team-pm/tests` 通过；`grep -n "backgroundTaskId\|task_id" dev-flow/scripts/flow_guard.py team-pm/scripts/worker_guard.py` 无输出
+  - 验证：`-s dev-flow/tests` 15 个通过，`-s team-pm/tests` 60 个通过（worker_guard 放行时确认没有“会话停下”事件）；grep 无输出；改动 `dev-flow/tests/test_flow_guard.py`、`team-pm/tests/test_worker_guard.py`、flow_guard.py 和 worker_guard.py 开头说明、两个 SKILL.md、failure-modes.md F3
 
 ## 9. 待确认问题
 
