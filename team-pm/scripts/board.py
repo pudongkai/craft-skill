@@ -288,7 +288,7 @@ def cmd_notify(a):
 
 
 def cmd_version(a):
-    print(f"版本: v{VERSION}")
+    print(f"版本: {VERSION}")
     print(f"看板根目录: {os.path.abspath(bs.board_root())}")
 
 
