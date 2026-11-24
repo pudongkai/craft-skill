@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_dispatch  # noqa: E402
+import board_pm  # noqa: E402
 import board_store as bs  # noqa: E402
 
 VERSION = "0.1.0"
@@ -104,7 +105,8 @@ def cmd_project(a):
     if a.action == "new":
         doc = bs.create_project(a.name, a.repo, a.confirm, a.priority, a.goal)
         print(f"已建项目 {a.name}：{doc.path}")
-        if not board_dispatch.repo_trusted(doc.get("仓库")):
+        register_current_pm(doc.get("仓库"))
+        if bs.load_config().get("runner") == "session" and not board_dispatch.repo_trusted(doc.get("仓库")):
             print(f"注意：{doc.get('仓库')} 还没被 Claude Code 信任，派单会失败。请人在这个目录运行一次 claude 并接受信任提示")
     elif a.action == "set":
         bs.set_project_field(a.name, a.key, a.value)
@@ -122,10 +124,23 @@ def cmd_project(a):
         print(f"已勾掉 {bs.resolve_human_questions(a.name, a.which)} 条")
     elif a.action == "show":
         print("\n".join(bs.load_project(a.name).lines))
+    elif a.action == "export":
+        print(f"已导出 {a.name}：{board_pm.export_project(a.name, a.out)}")
+    elif a.action == "import":
+        name = board_pm.import_project(a.archive, a.repo)
+        print(f"已导入 {name}，进行中的单已改回待领取")
+        register_current_pm(bs.load_project(name).get("仓库"))
     elif a.action == "list":
         for name in bs.project_names():
             p = bs.load_project(name)
             print(f"{name}  阶段 {p.get('阶段')}  优先级 {p.get('优先级')}  {p.get('目标')}")
+
+
+def register_current_pm(repo):
+    """在 PM 会话里立项或导入时，把这个会话登记为该仓库的 PM，接力时同一仓库的项目都交给它。"""
+    terminal = board_pm.register_current_pm(repo)
+    if terminal:
+        print(f"已登记本会话（{terminal}）为 {repo} 的 PM")
 
 
 def cmd_item(a):
@@ -196,7 +211,9 @@ def cmd_events(a):
 def build_parser():
     ap = argparse.ArgumentParser(prog="board.py", description="团队看板")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    add_project_parsers(sub.add_parser("project", help="项目卡").add_subparsers(dest="action", required=True))
+    project_actions = sub.add_parser("project", help="项目卡").add_subparsers(dest="action", required=True)
+    add_project_parsers(project_actions)
+    board_pm.register(sub, project_actions, COMMANDS)
     add_item_parsers(sub.add_parser("item", help="任务单").add_subparsers(dest="action", required=True))
     sub.add_parser("ready", help="列出可以马上派出的任务单")
     sub.add_parser("status", help="所有项目的进展").add_argument("project", nargs="?")

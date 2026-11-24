@@ -62,17 +62,26 @@ def ensure_worktree(name):
     if os.path.isdir(workdir):
         return workdir
     exclude_worktrees(repo)
-    code, _ = run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
-    if code == 0:
-        cmd = ["git", "-C", repo, "worktree", "add", workdir, branch]
-    else:
-        cmd = ["git", "-C", repo, "worktree", "add", "-b", branch, workdir, "HEAD"]
-    code, out = run(cmd)
+    code, out = run(worktree_command(repo, workdir, branch))
     if code != 0:
         raise bs.BoardError(f"建 worktree 失败：{out.strip()}")
-    _, head = run(["git", "-C", workdir, "rev-parse", "--short", "HEAD"])
-    bs.set_project_field(name, "基线", head.strip())
+    if not p.get("基线"):  # 从别的机器接手的项目沿用原来的基线
+        _, head = run(["git", "-C", workdir, "rev-parse", "--short", "HEAD"])
+        bs.set_project_field(name, "基线", head.strip())
     return workdir
+
+
+def worktree_command(repo, workdir, branch):
+    """本地有分支就用它；只有远程分支（从别的机器接手）时建跟踪分支；都没有时从 HEAD 新建。"""
+    code, _ = run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+    if code == 0:
+        return ["git", "-C", repo, "worktree", "add", workdir, branch]
+    _, refs = run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+                  stdout_only=True)
+    remote = next((r for r in refs.split() if r.split("/", 1)[-1] == branch), None)
+    if remote:
+        return ["git", "-C", repo, "worktree", "add", "--track", "-b", branch, workdir, remote]
+    return ["git", "-C", repo, "worktree", "add", "-b", branch, workdir, "HEAD"]
 
 
 def repo_trusted(repo):

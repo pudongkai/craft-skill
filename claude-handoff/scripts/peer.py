@@ -10,6 +10,8 @@
                                                  在对方弹出终端窗口启动 Claude，输出窗口编号（/dev/ttys…）；
                                                  --tmux 改为在对方的 tmux 里启动，编号就是会话名
   peer.py screen <机器> <窗口编号>                  查看对方窗口（或 tmux 会话）屏幕的最后 40 行
+  peer.py send <机器> <窗口编号> <消息>              把消息输入对方窗口（或 tmux 会话）里正在运行的 Claude，
+                                                 用于交给对方已经开着的 PM 会话
 
 <机器> 可以是电脑名或主机名的一部分（不区分大小写），如 m16。
 """
@@ -226,6 +228,42 @@ def screen_script(ident, literal=True):
             "printf '%s\\n' \"$out\" | grep -v '^[[:space:]]*$' | tail -40")
 
 
+def send_script(ident, message):
+    """把一行消息输入到对方终端窗口（按 tty 找）或 tmux 会话里运行的 Claude 并回车提交。"""
+    text = " ".join(message.split())  # 换行会被当成提交，合成一行
+    lines = [
+        'on run argv',
+        'tell application "Terminal"',
+        'repeat with w in windows',
+        'repeat with t in tabs of w',
+        'if tty of t is item 1 of argv then',
+        'do script (item 2 of argv) in t',
+        'return "SENT"',
+        'end if',
+        'end repeat',
+        'end repeat',
+        'end tell',
+        'return "NO_WINDOW"',
+        'end run',
+    ]
+    args = " ".join(f"-e {shlex.quote(line)}" for line in lines)
+    ident_q, text_q = shlex.quote(ident), shlex.quote(text)
+    return (f"case {ident_q} in /dev/*) osascript {args} {ident_q} {text_q} 2>&1;; "
+            f"*) tmux send-keys -t {ident_q} -l {text_q} && tmux send-keys -t {ident_q} Enter && echo SENT "
+            "|| echo NO_WINDOW;; esac; sleep 8; " + screen_script(ident))
+
+
+def cmd_send(args):
+    keyword, ident, message = args
+    r = run_remote(keyword, send_script(ident, message), capture=True)
+    out = r.stdout + r.stderr
+    if "-1743" in out or "Not authorized" in out:
+        raise PeerError("对方没有允许远程控制“终端”，见 SKILL.md 的“首次设置”第 5 步。")
+    if "SENT" not in out:
+        raise PeerError(f"对方没有编号为 {ident} 的终端窗口或 tmux 会话，消息没有发出。")
+    print(out.replace("SENT", "已发送，对方屏幕：", 1))
+
+
 def report_launch(out, session):
     if "NO_TMUX_SERVER" in out:
         raise PeerError("对方没有正在运行的 tmux。请在对方机器本地的终端里执行一次 `tmux new -d -s main`，"
@@ -260,7 +298,7 @@ def cmd_screen(args):
 COMMANDS = {
     "list": (cmd_list, 0), "resolve": (cmd_resolve, 1), "ssh": (cmd_ssh, -2),
     "copy": (cmd_copy, 3), "find-project": (cmd_find_project, 2), "launch": (cmd_launch, 4),
-    "screen": (cmd_screen, 2),
+    "screen": (cmd_screen, 2), "send": (cmd_send, 3),
 }
 
 
