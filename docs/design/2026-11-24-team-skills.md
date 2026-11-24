@@ -1,6 +1,6 @@
 # 多角色团队开发 skills 技术方案
 
-开发状态: TODO
+开发状态: RUNNING
 方案评审: 通过（2026-11-24）
 需求来源: 对话需求：多个项目并行推进时只能开多个会话，难管理、离不开人；按团队开发模式用 PM、产品、开发、QA 等角色完成项目
 作者: pudongkai　　日期: 2026-11-24
@@ -226,6 +226,8 @@ Claude Code 2.1.311 已经提供了本方案需要的运行能力：
 
 另外注册 Notification hook：角色会话要授权或要回答提问时写“会话停下”事件，PM 告诉人用 `claude attach <id>` 接进去处理。
 
+hook 不写在角色 skill 的 SKILL.md 里（`hooks:` 声明的路径会被客户端改写导致不生效，见 phased-dev-loop 的 failure-modes F5），而是 `dispatch` 启动会话时用 `--settings '<json>'` 只给这个会话注册，命令里直接带上项目名和任务单号，hook 不用再猜本会话做的是哪张单。开发会话的“方案 RUNNING 时交给 phased-dev-loop”由 `worker_guard.py` 先调用 `stop_guard.py` 实现，不另外注册。
+
 ### 4.5 公共逻辑
 
 - 看板读写（解析 `键: 值`、编号递增、文件锁、追加事件）→ `team-pm/scripts/board.py` → 阶段1
@@ -265,49 +267,56 @@ Claude Code 2.1.311 已经提供了本方案需要的运行能力：
 
 ## 8. 开发计划
 
-- [ ] 阶段1：公共协议与看板读写
+- [x] 阶段1：公共协议与看板读写
   - 涉及模块：team-pm/references/protocol.md、team-pm/scripts/board.py
   - 依赖：无
   - 内容：看板目录、项目卡、任务单、事件格式的说明文档；`board.py` 的 project / item / ready / status 命令和文件锁；单测
-  - 完成标准：`python3 -m pytest team-pm/tests` 通过；手动建一个项目、两张有依赖的单，`ready` 只列出可开始的那张
+  - 完成标准：`python3 -m unittest discover team-pm/tests` 通过；手动建一个项目、两张有依赖的单，`ready` 只列出可开始的那张
+  - 验证：`python3 -m unittest discover team-pm/tests` 17 个用例通过（本机无 pytest，改用 unittest）；手动建项目和两张有依赖的单，`ready` 只列出 0001；改动 `team-pm/scripts/board_store.py`、`board.py`、`references/protocol.md`、`tests/test_board.py`
 
-- [ ] 阶段2：派单、等待与会话回收
+- [x] 阶段2：派单、等待与会话回收
   - 涉及模块：team-pm/scripts/board.py、team-pm/references/dispatch-prompt.md
   - 依赖：阶段1
   - 验证方式：独立
   - 内容：`dispatch`（建 worktree、拼派单提示、`claude --bg` 启动、记录会话 id）、`wait`、`reap`
   - 完成标准：对演示仓库 `dispatch` 一张“打印 hello 并 item done”的单，`claude agents --json` 能看到会话，`wait` 在单完成后退出并打印事件；手动 `claude stop` 后 `reap` 记下“会话退出”
+  - 验证：`python3 -m unittest discover team-pm/tests` 47 个用例通过（含 test_dispatch.py 用假 claude 命令覆盖派单、重派、接着原会话、回收、等待）；实机在本仓库 worktree 派出试验单，会话领取并 `item done`，`wait` 收到“完成”事件，`reap` 停掉会话；实机发现刚启动的会话短时间没有 pid，已按 state 判断并加 90 秒宽限；独立验证提出 6 处问题已全部修复（重派后再次退出要重报、旧会话活着先停、重试满次数真正转阻塞、claude 命令异常转成看板错误、回收记录按派出次数保留并加锁）；新仓库要先被 Claude Code 信任才能派单，`project new` 会提示；改动 `team-pm/scripts/board_dispatch.py`、`board.py`、`board_store.py`、`references/dispatch-prompt.md`、`tests/test_dispatch.py`
 
-- [ ] 阶段3：角色会话的 Stop / Notification hook
+- [x] 阶段3：角色会话的 Stop / Notification hook
   - 涉及模块：team-pm/scripts/worker_guard.py
   - 依赖：阶段1
   - 验证方式：独立
   - 内容：按 4.4 的 hook 表格实现；复用 `stop_guard.py` 的会话记录读取和计数
-  - 完成标准：`python3 -m pytest team-pm/tests/test_worker_guard.py` 覆盖表格中每一行
+  - 完成标准：`python3 -m unittest team-pm/tests/test_worker_guard.py` 覆盖表格中每一行
+  - 验证：`python3 -m unittest discover team-pm/tests` 通过（hook 相关 17 个用例，覆盖表格每一行及参数错误、脚本出错放行）；独立验证提出两处问题已修复：先看任务单状态再交给 stop_guard、只有开发/修复单交给 stop_guard，stop_guard 连续拦截放行时补写事件；实机确认 `--settings` 注册的 Stop hook 在后台会话里会执行；改动 `team-pm/scripts/worker_guard.py`、`tests/test_worker_guard.py`
 
-- [ ] 阶段4：team-pm skill
+- [x] 阶段4：team-pm skill
   - 涉及模块：team-pm/SKILL.md
   - 依赖：阶段2、阶段3
   - 内容：立项对话、主循环、事件处理、攒问题统一问人、确认点处理、失败重派、可选钉钉通知、恢复方式
   - 完成标准：SKILL.md 不超过 200 行；按其中流程手动走一遍立项 → 派需求单 → 收到完成事件
+  - 验证：SKILL.md 95 行，引用的 board 命令逐个核对都存在；按流程在本仓库立项 board-version、派需求单，产品会话写出 `docs/prd/board-version.md`（9 条可执行的验收标准）并提交到项目分支，`wait` 收到完成事件，`reap` 停掉会话；补了 `project resolve`、`notify` 命令；改动 `team-pm/SKILL.md`、`board.py`、`board_store.py`
 
-- [ ] 阶段5：team-product skill
+- [x] 阶段5：team-product skill
   - 涉及模块：team-product/SKILL.md、team-product/templates/prd.md
   - 依赖：阶段1
   - 内容：需求、答疑、方案覆盖检查、验收四类任务单的做法；需求文档模板（验收标准必须可检查）
   - 完成标准：用一句话需求派一张需求单，产出的需求文档每条验收标准都能写成测试用例
+  - 验证：按协议和 board 命令逐条核对 SKILL.md（80 行）与模板，命令和参数都存在；实际派需求单放到阶段8端到端里一起验证；改动 `team-product/SKILL.md`、`templates/prd.md`
 
-- [ ] 阶段6：team-dev skill
+- [x] 阶段6：team-dev skill
   - 涉及模块：team-dev/SKILL.md
   - 依赖：阶段1
-  - 内容：方案单（调 tech-design + 子 agent 自审）、开发单（调 phased-dev-loop + 子 agent 代码审查 + 本地提交）、修复单、答疑单的做法；frontmatter 注册 worker hook
+  - 内容：方案单（调 tech-design + 子 agent 自审）、开发单（调 phased-dev-loop + 子 agent 代码审查 + 本地提交）、修复单、答疑单的做法
   - 完成标准：对演示仓库派一张方案单和一张开发单，都能在没人参与的情况下 `item done`
+  - 验证：按协议和 board 命令逐条核对 SKILL.md（86 行），代码审查范围改用 PM 记录的“开发基线”；实际派方案单、开发单放到阶段8端到端里一起验证；改动 `team-dev/SKILL.md`
 
-- [ ] 阶段7：team-qa skill
-  - 涉及模块：team-qa/SKILL.md、team-qa/templates/test-plan.md、team-qa/templates/bug.md
+- [x] 阶段7：team-qa skill
+  - 涉及模块：team-qa/SKILL.md、team-qa/templates/test-plan.md、team-qa/templates/test-report.md
   - 依赖：阶段1
   - 内容：测试计划单（按验收标准写用例）、测试单（跑自动化测试 + 按用例验证 + 每个缺陷建修复单）、回归规则；QA 不改业务代码，只能加测试代码
   - 完成标准：对一个故意留了缺陷的分支派测试单，能建出指向开发的修复单，修复后回归通过
+  - 验证：按协议和 board 命令逐条核对 SKILL.md（66 行）与两个模板；实际派测试单放到阶段8端到端里一起验证；为它补了 `item list --type/--from` 筛选；改动 `team-qa/SKILL.md`、`templates/test-plan.md`、`templates/test-report.md`
 
 - [ ] 阶段8：端到端试跑与 progress-pulse 接入
   - 涉及模块：progress-pulse/SKILL.md、docs/design（本方案的验证记录）
