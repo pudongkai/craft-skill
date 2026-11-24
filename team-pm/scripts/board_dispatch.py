@@ -263,6 +263,19 @@ def reap():
     return notes
 
 
+def dispatch_key(name, item):
+    """一次派出的标识：同一张单每次派出（会话 + 派出时间）只报一次停下或退出。"""
+    return f"{name}/{bs.item_number(item)}/{item.get('会话')}/{item.get('派出时间')}"
+
+
+def mark_reported(name, item):
+    """hook 已经为这次派出写过“会话停下”时调用，reap 不再为同一次停机写“会话退出”。"""
+    with bs.file_lock(".reap.lock"):
+        reported = load_reported()
+        reported.add(dispatch_key(name, item))
+        save_reported(reported)
+
+
 def reap_item(name, item, row, reported, keep):
     sid, status, no = item.get("会话"), item.get("状态"), bs.item_number(item)
     if not sid:
@@ -270,12 +283,15 @@ def reap_item(name, item, row, reported, keep):
     if status in FINISHED_STATUSES and session_alive(row):
         stop_session(sid)
         return f"{name} {no} 已{status}，停掉会话 {sid}"
-    if status != "进行中" or session_alive(row) or recently_dispatched(item):
+    if status != "进行中":
         return None
-    key = f"{name}/{no}/{sid}/{item.get('派出时间')}"
-    keep.add(key)
+    key = dispatch_key(name, item)
     if key in reported:
+        keep.add(key)
         return None
+    if session_alive(row) or recently_dispatched(item):
+        return None
+    keep.add(key)
     bs.append_event(name, no, "会话退出", f"会话 {sid} 已不在运行，任务单还是进行中")
     return f"{name} {no} 会话 {sid} 已退出"
 
@@ -317,7 +333,7 @@ def wait(since=None, timeout=3600, reap_interval=60, poll=3):
 def cmd_dispatch(a):
     sid, resumed = dispatch(a.project, a.number, a.retry)
     how = "接着原会话" if resumed else "新会话"
-    print(f"已派出 {a.project} {int(a.number):04d}（{how}）：会话 {sid}；需要时 claude attach {sid}")
+    print(f"已派出 {a.project} {bs.format_no(a.number)}（{how}）：会话 {sid}；需要时 claude attach {sid}")
 
 
 def cmd_reap(a):

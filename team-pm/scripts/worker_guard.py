@@ -22,6 +22,7 @@ STOP_GUARD = os.path.join(SKILLS_ROOT, "phased-dev-loop", "scripts", "stop_guard
 # 读会话记录和按会话计数的逻辑与 phased-dev-loop 共用，两个 skill 装在同一个 skills 目录下
 sys.path.insert(0, os.path.dirname(STOP_GUARD))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_dispatch as bd  # noqa: E402
 import board_store as bs  # noqa: E402
 from stop_guard import read_text, scan_transcript, stalled_count  # noqa: E402
 
@@ -69,12 +70,18 @@ def decide_stop(payload, project, doc, text):
     no = bs.item_number(doc)
     state_dir = os.path.join("projects", project)
     if stalled_count(bs.board_root(), state_dir, payload.get("session_id", ""), text) > MAX_STALLED_BLOCKS:
-        bs.append_event(project, no, "会话停下", f"连续 {MAX_STALLED_BLOCKS} 次拦截任务单都没变化")
+        report_stalled(project, doc, f"连续 {MAX_STALLED_BLOCKS} 次拦截任务单都没变化")
         return {"systemMessage": (
             f"[team] 连续 {MAX_STALLED_BLOCKS} 次拦截后任务单 {project} {no} 没有任何变化，"
             "已放行停止，并通知 PM 处理。"
         )}
     return {"decision": "block", "reason": block_reason(project, no)}
+
+
+def report_stalled(project, doc, note):
+    """写“会话停下”事件叫醒 PM，并告诉 reap 这次停机已经报过，不再重复报“会话退出”。"""
+    bs.append_event(project, bs.item_number(doc), "会话停下", note)
+    bd.mark_reported(project, doc)
 
 
 def forward_stop_guard(raw, project, doc):
@@ -89,7 +96,7 @@ def forward_stop_guard(raw, project, doc):
     except ValueError:
         released = False
     if released:
-        bs.append_event(project, bs.item_number(doc), "会话停下", "phased-dev-loop 连续拦截后技术方案没有变化，已放行")
+        report_stalled(project, doc, "phased-dev-loop 连续拦截后技术方案没有变化，已放行")
     return out
 
 

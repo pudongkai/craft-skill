@@ -144,6 +144,24 @@ class DispatchTest(unittest.TestCase):
         bd.reap()
         self.assertEqual(json.load(open(bd.reap_state_path())), [])
 
+    def test_hook_reported_stall_not_reported_again(self):
+        bd.dispatch("demo", "1")
+        bd.mark_reported("demo", bs.load_item("demo", "1"))
+        bs.update_item("demo", "1", {"派出时间": "2020-01-01 00:00:00"})
+        bd.mark_reported("demo", bs.load_item("demo", "1"))
+        self.set_agents([{"id": "abc123", "pid": os.getpid(), "state": "done"}])
+        bd.reap()  # 会话还开着时记录也要保留
+        self.set_agents([{"id": "abc123", "state": "done"}])
+        bd.reap()
+        self.assertEqual(bs.read_events(), [])
+
+    def test_reply_resets_retry(self):
+        bd.dispatch("demo", "1")
+        bd.dispatch("demo", "1", retry=True)
+        bs.update_item("demo", "1", {"状态": "阻塞"})
+        bs.reply_item("demo", "1", "人已处理")
+        self.assertEqual(bs.load_item("demo", "1").get("重试"), "0")
+
     def test_human_item_and_untrusted_repo(self):
         bs.create_item("demo", "人", "确认", "", "")
         with self.assertRaises(bs.BoardError):

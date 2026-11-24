@@ -1,6 +1,6 @@
 # 多角色团队开发 skills 技术方案
 
-开发状态: RUNNING
+开发状态: DONE
 方案评审: 通过（2026-11-24）
 需求来源: 对话需求：多个项目并行推进时只能开多个会话，难管理、离不开人；按团队开发模式用 PM、产品、开发、QA 等角色完成项目
 作者: pudongkai　　日期: 2026-11-24
@@ -318,11 +318,12 @@ hook 不写在角色 skill 的 SKILL.md 里（`hooks:` 声明的路径会被客�
   - 完成标准：对一个故意留了缺陷的分支派测试单，能建出指向开发的修复单，修复后回归通过
   - 验证：按协议和 board 命令逐条核对 SKILL.md（66 行）与两个模板；实际派测试单放到阶段8端到端里一起验证；为它补了 `item list --type/--from` 筛选；改动 `team-qa/SKILL.md`、`templates/test-plan.md`、`templates/test-report.md`
 
-- [ ] 阶段8：端到端试跑与 progress-pulse 接入
+- [x] 阶段8：端到端试跑与 progress-pulse 接入
   - 涉及模块：progress-pulse/SKILL.md、docs/design（本方案的验证记录）
   - 依赖：阶段4、阶段5、阶段6、阶段7
   - 内容：按测试方案的端到端用例同时跑两个项目；progress-pulse 增加检查看板一项
   - 完成标准：两个项目都走到“交付”，人只在三个确认点回复过；`board.py status` 显示两个项目阶段为交付
+  - 验证：按用户选择在本仓库临时 worktree 里同时跑 board-version、stop-guard-bg 两个项目，确认点由 PM 代答（项目卡 `人工确认: 无`）；两个项目各 7 张单（需求、方案、测试计划、方案覆盖检查、开发、测试、验收），全程没有人工介入，`board.py status` 显示两个项目都是交付；另在 board-version 分支埋一个缺陷派测试单，QA 建出修复单 0009，开发修复后 QA 回归通过（覆盖阶段5～7完成标准里的实际派单）；答疑、ask-human 后 reply 再派回原会话这条路径只有单测覆盖，没有实机跑；progress-pulse 增加检查看板；改动 `progress-pulse/SKILL.md`
 
 ## 9. 待确认问题
 
@@ -333,3 +334,9 @@ hook 不写在角色 skill 的 SKILL.md 里（`hooks:` 声明的路径会被客�
 - 角色会话默认权限模式 `auto`，可在 `config.json` 改。
 - 要人确认时默认只在 PM 会话里说，`notify: dws` 时同时发钉钉。
 - 看板放本机 `~/.claude/team/`。
+
+## 10. 收尾记录
+
+- 整体审查（子 agent）确认的问题已修复：回归没修好时 PM 会一直等（QA 第 1 次没修好也建新修复单，PM 按测试结果转人）；一次停机同时报“会话停下”和“会话退出”（hook 写事件时同时标记已报告）；QA 没有答疑单做法；人介入后重试次数不清零；测试单不等测试计划；并行提交带上别人暂存的文件（统一 `git commit -- <路径>`）；单号不是数字时报错堆栈；结果里的 `##` 行截断正文。
+- 未改：拦截计数文件没加锁（只会让放行晚一点）；各角色 SKILL.md 的“注意”一节与协议有少量重复。
+- 全量测试：team-pm 113 个、phased-dev-loop、dev-flow 的测试全部通过（team-pm 用例数包含试跑合并进来的 version 子命令和 Stop hook 识别后台 Bash 的测试）。

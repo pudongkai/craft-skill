@@ -179,6 +179,22 @@ class FilterAndResolveTest(BoardTestCase):
         self.assertIn("没开启", out)
 
 
+class InputCheckTest(BoardTestCase):
+    def test_bad_number_is_board_error(self):
+        self.new_project()
+        code, _ = self.run_cli("item", "show", "demo", "x")
+        self.assertEqual(code, 1)
+        bs.create_item("demo", "开发", "修复", "", "", source="0003")
+        code, out = self.run_cli("item", "list", "demo", "--from", "0003,0004")
+        self.assertEqual((code, out.split()[0]), (0, "0001"))
+
+    def test_heading_in_result_does_not_cut_section(self):
+        self.new_project()
+        bs.create_item("demo", "产品", "需求", "", "")
+        bs.update_item("demo", "1", result="结论\n## 细节\n第二段")
+        self.assertIn("第二段", bs.load_item("demo", "1").section("结果"))
+
+
 class ReadyTest(BoardTestCase):
     def ready(self):
         return [(n, bs.item_number(d)) for n, d in board.ready_items()]

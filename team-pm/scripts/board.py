@@ -138,7 +138,7 @@ def cmd_item(a):
             if matches(doc, a):
                 print(item_line(doc))
     elif a.action == "claim":
-        doc = bs.claim_item(a.project, a.number, a.session or os.environ.get("TEAM_SESSION", ""), a.resume)
+        doc = bs.claim_item(a.project, a.number, a.session, a.resume)
         print(f"已领取 {a.project} {bs.item_number(doc)}，开始干活；做完运行 item done")
     else:
         cmd_item_finish(a)
@@ -150,7 +150,7 @@ def matches(doc, a):
         return False
     if a.type and doc.get("类型") != a.type:
         return False
-    return not a.source or f"{int(a.source):04d}" in bs.parse_deps(doc.get("来源"))
+    return not a.source or set(bs.parse_deps(a.source)) & set(bs.parse_deps(doc.get("来源")))
 
 
 def cmd_item_finish(a):
@@ -167,7 +167,7 @@ def cmd_item_finish(a):
         bs.update_item(a.project, a.number, {a.key: a.value})
     elif a.action == "reply":
         bs.reply_item(a.project, a.number, a.text)
-    print(f"{a.project} {int(a.number):04d} 已更新")
+    print(f"{a.project} {bs.format_no(a.number)} 已更新")
 
 
 def cmd_ready(a):
@@ -243,7 +243,7 @@ def add_item_parsers(i):
     x.add_argument("project")
     x.add_argument("--status", choices=bs.ITEM_STATUSES)
     x.add_argument("--type", choices=list(bs.TYPES))
-    x.add_argument("--from", dest="source", default="", help="只列来源里含这个单号的")
+    x.add_argument("--from", dest="source", default="", help="只列来源里含这些单号之一的，多个用逗号分开")
     x = i.add_parser("claim")
     x.add_argument("project")
     x.add_argument("number")

@@ -154,7 +154,9 @@ class Doc:
 
     def set_section(self, name, body):
         r = self._section_range(name)
-        block = [""] + body.strip().splitlines() + [""]
+        # 正文里以 ## 开头的行会被当成新的一节，缩进一格避免把本节截断
+        rows = [" " + ln if SECTION_RE.match(ln) else ln for ln in body.strip().splitlines()]
+        block = [""] + rows + [""]
         if r:
             self.lines[r[0] + 1:r[1]] = block
         else:
@@ -279,8 +281,15 @@ def item_files(project):
     return sorted(n for n in os.listdir(d) if ITEM_FILE_RE.match(n))
 
 
+def format_no(number):
+    """把 1、0001 这类单号统一成四位；不是数字时报看板错误。"""
+    if not str(number).strip().isdigit():
+        raise BoardError(f"单号要写数字，如 0003：{number}")
+    return f"{int(number):04d}"
+
+
 def item_path(project, number):
-    no = f"{int(number):04d}"
+    no = format_no(number)
     for n in item_files(project):
         if n.startswith(no + "-"):
             return os.path.join(items_dir(project), n)
@@ -367,6 +376,7 @@ def reply_item(project, number, text):
         doc.append_to_section("答复", f"- {today()} {text}")
         if doc.get("状态") in ("阻塞", "待人确认"):
             doc.set("状态", "待领取")
+            doc.set("重试", "0")  # 人或别的角色介入后重新计重试次数
         doc.save()
     return doc
 
