@@ -8,6 +8,7 @@ from unittest import mock
 SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 sys.path.insert(0, SCRIPTS)
 import board_dispatch as bd  # noqa: E402
+import board_merge as bm  # noqa: E402
 import board_pm as bp  # noqa: E402
 import board_store as bs  # noqa: E402
 
@@ -91,6 +92,59 @@ class WorktreeFromRemoteTest(PmTestCase):
         subprocess.run(cmd, check=True, capture_output=True)
         log = subprocess.run(["git", "-C", workdir, "log", "--oneline", "-1"], capture_output=True, text=True)
         self.assertIn("work on demo", log.stdout)
+
+
+def git_out(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class MergeTest(PmTestCase):
+    def setUp(self):
+        super().setUp()
+        git(self.repo, "branch", "release")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "main only")
+        bs.create_project("demo", self.repo, "无", "P1", "")
+        self.workdir = bd.ensure_worktree("demo")
+
+    def commit_file(self, cwd, path, text, msg):
+        with open(os.path.join(cwd, path), "w") as f:
+            f.write(text)
+        git(cwd, "add", path)
+        git(cwd, "commit", "-q", "-m", msg)
+
+    def test_branch_starts_from_release(self):
+        log = git_out(self.workdir, "log", "--format=%s")
+        self.assertNotIn("main only", log)
+
+    def test_merge_in_temp_worktree(self):
+        self.commit_file(self.workdir, "a.txt", "a", "feature a")
+        target, commit = bm.merge_project("demo")
+        self.assertEqual(target, "release")
+        self.assertIn("feature a", git_out(self.repo, "log", "--format=%s", "release"))
+        self.assertEqual(git_out(self.repo, "rev-parse", "--short", "release"), commit)
+        self.assertNotIn("merge-release", git_out(self.repo, "worktree", "list"))
+        self.assertIn(f"合并到 release（{commit}）", bs.load_project("demo").section("记录"))
+
+    def test_merge_where_release_checked_out(self):
+        self.commit_file(self.workdir, "a.txt", "a", "feature a")
+        git(self.repo, "checkout", "-q", "release")
+        bm.merge_project("demo")
+        self.assertTrue(os.path.exists(os.path.join(self.repo, "a.txt")))
+
+    def test_conflict_aborts(self):
+        self.commit_file(self.workdir, "a.txt", "from feature", "feature a")
+        git(self.repo, "checkout", "-q", "release")
+        self.commit_file(self.repo, "a.txt", "from release", "release a")
+        before = git_out(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(bs.BoardError, "冲突文件：\na.txt"):
+            bm.merge_project("demo")
+        self.assertEqual(git_out(self.repo, "rev-parse", "HEAD"), before)
+        self.assertEqual(git_out(self.repo, "status", "--porcelain", "--untracked-files=no"), "")
+
+    def test_missing_target(self):
+        bs.set_project_field("demo", "目标分支", "no-such")
+        with self.assertRaisesRegex(bs.BoardError, "没有 no-such 分支"):
+            bm.merge_project("demo")
 
 
 if __name__ == "__main__":

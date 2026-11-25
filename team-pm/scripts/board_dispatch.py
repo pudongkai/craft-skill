@@ -62,7 +62,7 @@ def ensure_worktree(name):
     if os.path.isdir(workdir):
         return workdir
     exclude_worktrees(repo)
-    code, out = run(worktree_command(repo, workdir, branch))
+    code, out = run(worktree_command(repo, workdir, branch, p.get("目标分支") or "release"))
     if code != 0:
         raise bs.BoardError(f"建 worktree 失败：{out.strip()}")
     if not p.get("基线"):  # 从别的机器接手的项目沿用原来的基线
@@ -71,17 +71,30 @@ def ensure_worktree(name):
     return workdir
 
 
-def worktree_command(repo, workdir, branch):
-    """本地有分支就用它；只有远程分支（从别的机器接手）时建跟踪分支；都没有时从 HEAD 新建。"""
-    code, _ = run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
-    if code == 0:
+def worktree_command(repo, workdir, branch, target="release"):
+    """本地有分支就用它；只有远程分支（从别的机器接手）时建跟踪分支；都没有时新建。
+
+    新分支从目标分支拉出，交付时合并回目标分支只带上本项目的提交；仓库里没有目标分支时从 HEAD 拉出。
+    """
+    if branch_exists(repo, branch):
         return ["git", "-C", repo, "worktree", "add", workdir, branch]
-    _, refs = run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes"],
-                  stdout_only=True)
-    remote = next((r for r in refs.split() if r.split("/", 1)[-1] == branch), None)
+    remote = remote_branch(repo, branch)
     if remote:
         return ["git", "-C", repo, "worktree", "add", "--track", "-b", branch, workdir, remote]
-    return ["git", "-C", repo, "worktree", "add", "-b", branch, workdir, "HEAD"]
+    start = target if branch_exists(repo, target) else (remote_branch(repo, target) or "HEAD")
+    return ["git", "-C", repo, "worktree", "add", "-b", branch, workdir, start]
+
+
+def branch_exists(repo, branch):
+    code, _ = run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+    return code == 0
+
+
+def remote_branch(repo, branch):
+    """远程跟踪分支里和 branch 同名的那个（如 origin/release），没有时返回 None。"""
+    _, refs = run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+                  stdout_only=True)
+    return next((r for r in refs.split() if r.split("/", 1)[-1] == branch), None)
 
 
 def repo_trusted(repo):

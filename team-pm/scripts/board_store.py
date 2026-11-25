@@ -206,6 +206,7 @@ def create_project(name, repo, confirm, priority, goal):
             f"仓库: {repo}",
             f"工作目录: {os.path.join(repo, '.claude', 'worktrees', name)}",
             f"分支: feat/{name}",
+            "目标分支: release",
             "阶段: 立项",
             f"人工确认: {confirm}",
             f"优先级: {priority}",
