@@ -1,4 +1,4 @@
-"""board.py version 子命令的测试，用例编号对应 docs/test/board-version.md。"""
+"""board.py version 子命令的测试。"""
 import os
 import re
 import shutil
