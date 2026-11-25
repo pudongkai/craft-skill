@@ -87,7 +87,7 @@ def print_status(names):
         p = bs.load_project(name)
         docs = bs.list_items(name)
         pending = [ln for ln in p.section("待人确认").splitlines() if ln.startswith("- [ ]")]
-        print(f"■ {name}  阶段 {p.get('阶段')}  优先级 {p.get('优先级')}  待人确认 {len(pending)}")
+        print(f"■ {name}  阶段 {p.get('阶段')}  规模 {p.get('规模') or bs.DEFAULT_SCALE}  优先级 {p.get('优先级')}  待人确认 {len(pending)}")
         for doc in docs:
             if doc.get("状态") not in ("完成", "取消"):
                 print(item_line(doc))
@@ -161,9 +161,18 @@ def cmd_item(a):
                 print(item_line(doc))
     elif a.action == "claim":
         doc = bs.claim_item(a.project, a.number, a.session, a.resume)
-        print(f"已领取 {a.project} {bs.item_number(doc)}，开始干活；做完运行 item done")
+        print_claimed(a.project, doc)
     else:
         cmd_item_finish(a)
+
+
+def print_claimed(project, doc):
+    """领单时一并打印任务单全文和项目卡，角色不用再分别 item show、project show。"""
+    print(f"已领取 {project} {bs.item_number(doc)}，开始干活；做完运行 item done")
+    print("\n===== 任务单 =====")
+    print("\n".join(doc.lines))
+    print("\n===== 项目卡 =====")
+    print("\n".join(bs.load_project(project).lines))
 
 
 def matches(doc, a):
@@ -233,7 +242,7 @@ def add_project_parsers(p):
     x = p.add_parser("new")
     x.add_argument("name")
     x.add_argument("--repo", required=True)
-    x.add_argument("--confirm", default="需求, 方案, 交付")
+    x.add_argument("--confirm", default="方案, 交付")
     x.add_argument("--priority", default="P1")
     x.add_argument("--goal", default="")
     x = p.add_parser("set")

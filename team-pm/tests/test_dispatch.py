@@ -159,6 +159,8 @@ class DispatchTest(unittest.TestCase):
         agent_type, prompt = bd.dispatch("demo", "1")
         self.assertEqual(agent_type, "team-product")
         self.assertIn("item claim demo 0001 --resume", prompt)
+        self.assertIn(bd.ROLE_GUIDE_FILE, prompt)
+        self.assertTrue(os.path.isfile(bd.ROLE_GUIDE_FILE))
         self.assertNotIn("这张单以前已经有会话", prompt)
         item = bs.load_item("demo", "1")
         self.assertEqual((item.get("状态"), item.get("会话")), ("进行中", bd.SUBAGENT))

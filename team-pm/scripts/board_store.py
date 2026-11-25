@@ -24,6 +24,9 @@ CODE_TYPES = {"开发", "修复"}
 ITEM_STATUSES = ["待领取", "进行中", "待人确认", "阻塞", "完成", "取消"]
 PROJECT_STAGES = ["立项", "需求", "方案", "开发", "测试", "验收", "交付", "完成", "暂停"]
 INACTIVE_STAGES = {"完成", "暂停"}
+# 项目规模决定走哪一档流程，见 team-pm/SKILL.md 的“项目规模”
+PROJECT_SCALES = ["S", "M", "L"]
+DEFAULT_SCALE = "M"
 
 DEFAULT_CONFIG = {
     "max_sessions": 4,
@@ -209,6 +212,7 @@ def create_project(name, repo, confirm, priority, goal):
             "目标分支: release",
             "阶段: 立项",
             f"人工确认: {confirm}",
+            f"规模: {DEFAULT_SCALE}",
             f"优先级: {priority}",
             f"目标: {goal}",
             "", "## 文档", "", "需求:", "方案:", "测试计划:",
@@ -223,12 +227,14 @@ def create_project(name, repo, confirm, priority, goal):
 def set_project_field(name, key, value):
     if key == "阶段" and value not in PROJECT_STAGES:
         raise BoardError(f"阶段只能是：{'、'.join(PROJECT_STAGES)}")
+    if key == "规模" and value not in PROJECT_SCALES:
+        raise BoardError(f"规模只能是：{'、'.join(PROJECT_SCALES)}")
     with board_lock():
         doc = load_project(name)
         old = doc.get(key)
         doc.set(key, value)
-        if key == "阶段" and old != value:
-            doc.append_to_section("记录", f"- {today()} 阶段 {old} → {value}")
+        if key in ("阶段", "规模") and old != value:
+            doc.append_to_section("记录", f"- {today()} {key} {old} → {value}")
         doc.save()
     return doc
 

@@ -68,6 +68,22 @@ class ProjectTest(BoardTestCase):
         with self.assertRaises(bs.BoardError):
             bs.set_project_field("demo", "阶段", "瞎写")
 
+    def test_new_project_defaults_scale_and_confirm(self):
+        with mock.patch.object(board.board_pm, "current_claude_terminal", return_value=None):
+            code, _ = self.run_cli("project", "new", "demo", "--repo", self.repo)
+        self.assertEqual(code, 0)
+        f = bs.load_project("demo").fields()
+        self.assertEqual((f["规模"], f["人工确认"]), ("M", "方案, 交付"))
+
+    def test_set_scale_records_history_and_validates(self):
+        self.new_project()
+        bs.set_project_field("demo", "规模", "S")
+        doc = bs.load_project("demo")
+        self.assertEqual(doc.get("规模"), "S")
+        self.assertIn("规模 M → S", doc.section("记录"))
+        with self.assertRaises(bs.BoardError):
+            bs.set_project_field("demo", "规模", "XL")
+
     def test_project_doc_and_question(self):
         self.new_project()
         bs.set_project_doc("demo", "需求", "docs/prd/demo.md")
@@ -107,6 +123,17 @@ class ItemTest(BoardTestCase):
             bs.claim_item("demo", "1", "s2")
         doc = bs.claim_item("demo", "1", "s2", resume=True)
         self.assertEqual(doc.get("会话"), "s2")
+
+    def test_claim_prints_item_and_project_card(self):
+        bs.create_item("demo", "产品", "需求", "写需求", "需求原文")
+        code, out = self.run_cli("item", "claim", "demo", "1", "--resume")
+        self.assertEqual(code, 0)
+        self.assertIn("已领取 demo 0001", out)
+        self.assertIn("# 0001 产品：写需求", out)
+        self.assertIn("需求原文", out)
+        self.assertIn("规模: M", out)
+        self.assertLess(out.index("===== 任务单 ====="), out.index("===== 项目卡 ====="))
+        self.assertEqual(bs.load_item("demo", "1").get("状态"), "进行中")
 
     def test_claim_finished_item_fails(self):
         bs.create_item("demo", "产品", "需求", "", "")
@@ -257,7 +284,7 @@ class StatusTest(BoardTestCase):
         bs.update_item("demo", "1", {"状态": "完成"})
         code, out = self.run_cli("status")
         self.assertEqual(code, 0)
-        self.assertIn("■ demo  阶段 立项", out)
+        self.assertIn("■ demo  阶段 立项  规模 M", out)
         self.assertIn("0002 [待领取] 开发/方案", out)
         self.assertNotIn("0001 [", out)
         self.assertIn("已完成 1 张，共 2 张", out)

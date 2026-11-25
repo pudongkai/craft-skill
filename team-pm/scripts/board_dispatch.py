@@ -17,7 +17,7 @@ import board_store as bs
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(SCRIPTS_DIR)
 PROMPT_FILE = os.path.join(SKILL_DIR, "references", "dispatch-prompt.md")
-PROTOCOL_FILE = os.path.join(SKILL_DIR, "references", "protocol.md")
+ROLE_GUIDE_FILE = os.path.join(SKILL_DIR, "references", "role-guide.md")
 ROLE_SKILLS = {"产品": "team-product", "开发": "team-dev", "QA": "team-qa"}
 SUBAGENT = "子agent"  # 子 agent 方式派出的单，“会话”字段写这个
 MAX_RETRIES = 2
@@ -200,7 +200,7 @@ def render_prompt(kind, project_doc, item_doc):
         project=project_doc.get("项目"), number=bs.item_number(item_doc), role=role,
         type=item_doc.get("类型"), name=bs.item_name(item_doc), skill=ROLE_SKILLS[role],
         workdir=project_doc.get("工作目录"), branch=project_doc.get("分支"),
-        board=os.path.join(SCRIPTS_DIR, "board.py"), protocol=PROTOCOL_FILE)
+        board=os.path.join(SCRIPTS_DIR, "board.py"), guide=ROLE_GUIDE_FILE)
 
 
 # ---------- dispatch ----------
