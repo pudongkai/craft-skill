@@ -118,8 +118,9 @@ class MergeTest(PmTestCase):
 
     def test_merge_in_temp_worktree(self):
         self.commit_file(self.workdir, "a.txt", "a", "feature a")
-        target, commit = bm.merge_project("demo")
+        target, commit, notes = bm.merge_project("demo")
         self.assertEqual(target, "release")
+        self.assertIn("仓库没有可推送的远程，没有推送", notes)
         self.assertIn("feature a", git_out(self.repo, "log", "--format=%s", "release"))
         self.assertEqual(git_out(self.repo, "rev-parse", "--short", "release"), commit)
         self.assertNotIn("merge-release", git_out(self.repo, "worktree", "list"))
@@ -141,10 +142,69 @@ class MergeTest(PmTestCase):
         self.assertEqual(git_out(self.repo, "rev-parse", "HEAD"), before)
         self.assertEqual(git_out(self.repo, "status", "--porcelain", "--untracked-files=no"), "")
 
+    def test_cleans_worktree_and_local_branch(self):
+        self.commit_file(self.workdir, "a.txt", "a", "feature a")
+        os.makedirs(os.path.join(self.workdir, ".claude", "dev-loop"))
+        with open(os.path.join(self.workdir, ".claude", "dev-loop", "ACTIVE"), "w") as f:
+            f.write("docs/x.md\n")
+        bm.merge_project("demo")
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertEqual(git_out(self.repo, "branch", "--list", "feat/demo"), "")
+
+    def test_dirty_worktree_kept(self):
+        self.commit_file(self.workdir, "a.txt", "a", "feature a")
+        with open(os.path.join(self.workdir, "b.txt"), "w") as f:
+            f.write("b")
+        _, _, notes = bm.merge_project("demo")
+        self.assertTrue(os.path.exists(self.workdir))
+        self.assertTrue(any("有未提交的改动" in n for n in notes))
+        self.assertTrue(any("还检出在" in n for n in notes))
+
     def test_missing_target(self):
         bs.set_project_field("demo", "目标分支", "no-such")
         with self.assertRaisesRegex(bs.BoardError, "没有 no-such 分支"):
             bm.merge_project("demo")
+
+
+class MergePushTest(PmTestCase):
+    """仓库有远程：合并后推送目标分支，删除远程的项目分支。"""
+
+    def setUp(self):
+        super().setUp()
+        self.origin = os.path.join(self.tmp.name, "origin.git")
+        git(self.tmp.name, "init", "-q", "--bare", self.origin)
+        git(self.repo, "remote", "add", "origin", self.origin)
+        git(self.repo, "branch", "release")
+        git(self.repo, "push", "-q", "origin", "release")
+        bs.create_project("demo", self.repo, "无", "P1", "")
+        self.workdir = bd.ensure_worktree("demo")
+        git(self.workdir, "commit", "-q", "--allow-empty", "-m", "feature a")
+        git(self.workdir, "push", "-q", "origin", "feat/demo")
+        git(self.repo, "fetch", "-q", "origin")
+
+    def remote_branches(self):
+        return git_out(self.origin, "branch", "--format=%(refname:short)").split()
+
+    def test_push_and_delete_remote_branch(self):
+        _, commit, notes = bm.merge_project("demo")
+        self.assertEqual(git_out(self.origin, "rev-parse", "--short", "release"), commit)
+        self.assertNotIn("feat/demo", self.remote_branches())
+        self.assertIn("已推送到 origin/release", notes)
+
+    def test_remote_branch_with_newer_commit_kept(self):
+        other = os.path.join(self.tmp.name, "other")
+        git(self.tmp.name, "clone", "-q", "-b", "feat/demo", self.origin, other)
+        git(other, "commit", "-q", "--allow-empty", "-m", "pushed later")
+        git(other, "push", "-q", "origin", "feat/demo")
+        _, _, notes = bm.merge_project("demo")
+        self.assertIn("feat/demo", self.remote_branches())
+        self.assertTrue(any("删除远程分支 origin/feat/demo 失败" in n for n in notes))
+
+    def test_push_failure_skips_cleanup(self):
+        git(self.repo, "remote", "set-url", "origin", os.path.join(self.tmp.name, "missing.git"))
+        with self.assertRaisesRegex(bs.BoardError, "推送到 origin 失败，没有清理"):
+            bm.merge_project("demo")
+        self.assertTrue(os.path.exists(self.workdir))
 
 
 if __name__ == "__main__":

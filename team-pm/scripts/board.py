@@ -126,8 +126,10 @@ def cmd_project(a):
     elif a.action == "show":
         print("\n".join(bs.load_project(a.name).lines))
     elif a.action == "merge":
-        target, commit = board_merge.merge_project(a.name)
-        print(f"已把 {a.name} 合并到 {target}（{commit}），没有推送")
+        target, commit, notes = board_merge.merge_project(a.name)
+        print(f"已把 {a.name} 合并到 {target}（{commit}）")
+        for note in notes:
+            print(f"- {note}")
     elif a.action == "export":
         print(f"已导出 {a.name}：{board_pm.export_project(a.name, a.out)}")
     elif a.action == "import":
@@ -263,7 +265,7 @@ def add_project_parsers(p):
     x.add_argument("name")
     x.add_argument("which", help="序号（从 1 数，只数未处理的）或 all")
     p.add_parser("show").add_argument("name")
-    p.add_parser("merge", help="把项目分支合并到目标分支（只在本地合并，不推送）").add_argument("name")
+    p.add_parser("merge", help="把项目分支合并到目标分支并推送，清理项目的 worktree 和分支").add_argument("name")
     p.add_parser("list")
 
 
